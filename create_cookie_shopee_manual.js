@@ -826,7 +826,7 @@ async function loginShopee(email, password, index) {
       const selectorTitleCaptcha = "#modal > aside > div._9CE2ae > div > div:nth-child(2) > div > div.Qm81FR > h1";
 
       // Tampilkan browser agar user bisa solve captcha manual
-      await moveBrowser("show");
+      // await moveBrowser("show");
 
       const client = await page.target().createCDPSession();
 
