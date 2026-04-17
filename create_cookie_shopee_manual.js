@@ -34,7 +34,7 @@ const EDGE_PATH = process.platform === 'darwin'
 
 // ================= CONTOH EMAIL & PASSWORD (GANTI DENGAN DATA ASLI) =================
 const ACCOUNTS = [
-  { email: "	oktarawageyuranda170426@gpsdhokgama.com", password: "contoh_password1" },
+  { email: "	oktarawageyuranda170426@gpsdhokgama.com", password: "MandalaROBBY304$" },
 ];
 
 // ================= UTIL =================
