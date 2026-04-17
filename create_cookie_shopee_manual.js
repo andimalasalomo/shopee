@@ -4,7 +4,7 @@ const request = require("request");
 const fs = require("fs");
 const path = require("path");
 const moment = require("moment-timezone");
-const cv = require("opencv-wasm");
+const { cv } = require("opencv-wasm");
 const { Jimp } = require("jimp");
 require("dotenv").config({ quiet: true });
 
