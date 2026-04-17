@@ -48,7 +48,7 @@ async function solveSliderCaptcha(bgB64, puzzleB64) {
 
     const processedSrc = new cv.Mat();
     const processedTempl = new cv.Mat();
-    
+
     // Konversi ke grayscale
     cv.cvtColor(src, processedSrc, cv.COLOR_RGBA2GRAY);
     cv.cvtColor(templ, processedTempl, cv.COLOR_RGBA2GRAY);
@@ -68,11 +68,11 @@ async function solveSliderCaptcha(bgB64, puzzleB64) {
 
     const minMax = cv.minMaxLoc(result);
     let x = minMax.maxLoc.x;
-    
+
     // Sedikit koreksi offset: di Shopee, biasanya hasil OpenCV bergeser 1-2 pixel
     // akibat bayangan pada tepi puzzle. Kita adjust manual sedikit.
     // Jika akurasinya sering kurang jauh, kita tambahkan padding fix.
-    
+
     // Cleanup memory
     src.delete();
     templ.delete();
@@ -121,7 +121,7 @@ if (process.platform === 'linux') {
 
 // ================= CONTOH EMAIL & PASSWORD (GANTI DENGAN DATA ASLI) =================
 const ACCOUNTS = [
-  { email: "	oktarawageyuranda170426@gpsdhokgama.com", password: "MandalaROBBY304$" },
+  { email: "hanifuyhoraah170426@gpsdhokgama.com", password: "MandalaROBBY304$" },
 ];
 
 // ================= UTIL =================
@@ -926,7 +926,7 @@ async function loginShopee(email, password, index) {
                   await delay(2000);
 
                   const evalClient = await page.target().createCDPSession();
-                  
+
                   try {
                     // Ambil URL gambar menggunakan MURNI CDP
                     const { result: urlResult } = await evalClient.send('Runtime.evaluate', {
@@ -946,7 +946,7 @@ async function loginShopee(email, password, index) {
 
                     if (bgUrl && puzzleUrl) {
                       console.log("📥 Mengambil gambar base64 via CDP...");
-                      
+
                       // Dapatkan script untuk fetch base64
                       const b64Expression = (url) => `(async function() {
                         try {
@@ -965,7 +965,7 @@ async function loginShopee(email, password, index) {
                         awaitPromise: true,
                         returnByValue: true
                       });
-                      
+
                       const { result: puzzleB64Result } = await evalClient.send('Runtime.evaluate', {
                         expression: b64Expression(puzzleUrl),
                         awaitPromise: true,
@@ -1045,7 +1045,7 @@ async function loginShopee(email, password, index) {
                         if (handleInfo) {
                           const dragStartX = handleInfo.handleX;
                           const dragStartY = handleInfo.handleY;
-                          
+
                           // Kita langsung percaya pada jarak hasil OpenCV (scaledOffset)
                           // Karena deteksi lebar track via DOM/CDP seringkali mengembalikan 0px (hidden container dll)
                           const safeDragDistance = scaledOffset;
@@ -1060,65 +1060,65 @@ async function loginShopee(email, password, index) {
                             await dragClient.send("Input.dispatchMouseEvent", {
                               type: "mouseMoved", x: dragStartX, y: dragStartY
                             });
-                          await delay(200 + Math.random() * 100);
+                            await delay(200 + Math.random() * 100);
 
-                          // Tekan mouse
-                          await dragClient.send("Input.dispatchMouseEvent", {
-                            type: "mousePressed",
-                            x: dragStartX, y: dragStartY,
-                            button: "left", clickCount: 1
-                          });
-                          await delay(120 + Math.random() * 80);
-
-                          // [FIX 3] Geser dengan kurva ease-out (cepat awal, pelan akhir)
-                          const totalSteps = 20 + Math.floor(Math.random() * 10);
-                          for (let i = 1; i <= totalSteps; i++) {
-                            const t = i / totalSteps;
-                            // Ease-out cubic curve
-                            const eased = 1 - Math.pow(1 - t, 3);
-
-                            const currentX = dragStartX + (safeDragDistance * eased);
-                            // Jitter vertikal tipis, berkurang mendekati target
-                            const jitter = (1 - t) * 2;
-                            const currentY = dragStartY + (Math.random() * jitter * 2 - jitter);
-
+                            // Tekan mouse
                             await dragClient.send("Input.dispatchMouseEvent", {
-                              type: "mouseMoved", x: currentX, y: currentY
+                              type: "mousePressed",
+                              x: dragStartX, y: dragStartY,
+                              button: "left", clickCount: 1
+                            });
+                            await delay(120 + Math.random() * 80);
+
+                            // [FIX 3] Geser dengan kurva ease-out (cepat awal, pelan akhir)
+                            const totalSteps = 20 + Math.floor(Math.random() * 10);
+                            for (let i = 1; i <= totalSteps; i++) {
+                              const t = i / totalSteps;
+                              // Ease-out cubic curve
+                              const eased = 1 - Math.pow(1 - t, 3);
+
+                              const currentX = dragStartX + (safeDragDistance * eased);
+                              // Jitter vertikal tipis, berkurang mendekati target
+                              const jitter = (1 - t) * 2;
+                              const currentY = dragStartY + (Math.random() * jitter * 2 - jitter);
+
+                              await dragClient.send("Input.dispatchMouseEvent", {
+                                type: "mouseMoved", x: currentX, y: currentY
+                              });
+
+                              // Timing: lambat di awal, cepat di tengah, lambat di akhir
+                              let stepDelay;
+                              if (t < 0.15) stepDelay = 20 + Math.random() * 15;
+                              else if (t < 0.75) stepDelay = 8 + Math.random() * 10;
+                              else stepDelay = 25 + Math.random() * 20;
+                              await delay(stepDelay);
+                            }
+
+                            // Final position tepat
+                            const finalX = dragStartX + safeDragDistance;
+                            await dragClient.send("Input.dispatchMouseEvent", {
+                              type: "mouseMoved", x: finalX, y: dragStartY
+                            });
+                            await delay(150 + Math.random() * 100);
+
+                            // Lepas mouse
+                            await dragClient.send("Input.dispatchMouseEvent", {
+                              type: "mouseReleased",
+                              x: finalX, y: dragStartY,
+                              button: "left", clickCount: 1
                             });
 
-                            // Timing: lambat di awal, cepat di tengah, lambat di akhir
-                            let stepDelay;
-                            if (t < 0.15) stepDelay = 20 + Math.random() * 15;
-                            else if (t < 0.75) stepDelay = 8 + Math.random() * 10;
-                            else stepDelay = 25 + Math.random() * 20;
-                            await delay(stepDelay);
+                            console.log(`✅ Auto geser selesai! Jarak: ${safeDragDistance}px`);
+
+                            // Tunggu verifikasi dari server
+                            await delay(2000);
+                          } finally {
+                            await dragClient.detach();
                           }
-
-                          // Final position tepat
-                          const finalX = dragStartX + safeDragDistance;
-                          await dragClient.send("Input.dispatchMouseEvent", {
-                            type: "mouseMoved", x: finalX, y: dragStartY
-                          });
-                          await delay(150 + Math.random() * 100);
-
-                          // Lepas mouse
-                          await dragClient.send("Input.dispatchMouseEvent", {
-                            type: "mouseReleased",
-                            x: finalX, y: dragStartY,
-                            button: "left", clickCount: 1
-                          });
-
-                          console.log(`✅ Auto geser selesai! Jarak: ${safeDragDistance}px`);
-
-                          // Tunggu verifikasi dari server
-                          await delay(2000);
-                        } finally {
-                          await dragClient.detach();
                         }
                       }
                     }
-                  }
-                  
+
                   } finally {
                     await evalClient.detach();
                   }
