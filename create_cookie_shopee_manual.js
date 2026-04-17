@@ -4,9 +4,80 @@ const request = require("request");
 const fs = require("fs");
 const path = require("path");
 const moment = require("moment-timezone");
+const cv = require("opencv-wasm");
+const { Jimp } = require("jimp");
 require("dotenv").config({ quiet: true });
 
 puppeteer.use(StealthPlugin());
+
+// ================= CAPTCHA SOLVER =================
+async function getBase64ImageFromUrl(page, url) {
+  try {
+    return await page.evaluate(async (imageUrl) => {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }, url);
+  } catch (err) {
+    console.error("❌ getBase64ImageFromUrl Error:", err.message);
+    return null;
+  }
+}
+
+async function solveSliderCaptcha(bgB64, puzzleB64) {
+  try {
+    const bgData = bgB64.replace(/^data:image\/\w+;base64,/, "");
+    const puzzleData = puzzleB64.replace(/^data:image\/\w+;base64,/, "");
+
+    const bgBuf = Buffer.from(bgData, "base64");
+    const puzzleBuf = Buffer.from(puzzleData, "base64");
+
+    const bgJimp = await Jimp.read(bgBuf);
+    const puzzleJimp = await Jimp.read(puzzleBuf);
+
+    const src = new cv.Mat(bgJimp.bitmap.height, bgJimp.bitmap.width, cv.CV_8UC4);
+    src.data.set(bgJimp.bitmap.data);
+
+    const templ = new cv.Mat(puzzleJimp.bitmap.height, puzzleJimp.bitmap.width, cv.CV_8UC4);
+    templ.data.set(puzzleJimp.bitmap.data);
+
+    const processedSrc = new cv.Mat();
+    const processedTempl = new cv.Mat();
+
+    cv.cvtColor(src, processedSrc, cv.COLOR_RGBA2GRAY);
+    cv.cvtColor(templ, processedTempl, cv.COLOR_RGBA2GRAY);
+
+    cv.Canny(processedSrc, processedSrc, 100, 200);
+    cv.Canny(processedTempl, processedTempl, 100, 200);
+
+    const result = new cv.Mat();
+    const mask = new cv.Mat();
+
+    cv.matchTemplate(processedSrc, processedTempl, result, cv.TM_CCORR_NORMED, mask);
+
+    const minMax = cv.minMaxLoc(result);
+    const x = minMax.maxLoc.x;
+
+    src.delete();
+    templ.delete();
+    processedSrc.delete();
+    processedTempl.delete();
+    result.delete();
+    mask.delete();
+
+    // The puzzle image is usually slightly padded or scaled.
+    // We adjust it if needed, but returning x is the core logic.
+    return x;
+  } catch (err) {
+    console.error("❌ Error in solveSliderCaptcha:", err.message);
+    return 0;
+  }
+}
 
 moment.tz.setDefault("Asia/Jakarta");
 
@@ -28,9 +99,13 @@ if (TYPE_COOKIE === "MY") {
 let LOGIN_URL = `${BASE_URL}/buyer/login`;
 
 // EDGE ASLI
-const EDGE_PATH = process.platform === 'darwin'
+let EDGE_PATH = process.platform === 'darwin'
   ? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
   : "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+
+if (process.platform === 'linux') {
+  EDGE_PATH = '/usr/bin/google-chrome'; // Fallback for linux testing
+}
 
 // ================= CONTOH EMAIL & PASSWORD (GANTI DENGAN DATA ASLI) =================
 const ACCOUNTS = [
@@ -84,6 +159,7 @@ async function loginShopee(email, password, index) {
       "--disable-software-rasterizer",
       "--disable-dev-shm-usage",
       "--no-zygote",
+      "--no-sandbox",
       "--no-first-run",
       "--wm-window-animations-disabled",
       "--window-size=720,2000",
@@ -809,10 +885,7 @@ async function loginShopee(email, password, index) {
               if (currentSrc !== lastSrc) {
                 lastSrc = currentSrc;
                 lastX = "translateX(0px)";
-                console.log("🔄 Gambar Captcha berubah, menunggu solve manual...");
-
-                // Update title captcha agar user tahu
-                const teksBaru = `[MANUAL] Silakan geser slider!`;
+                console.log("🔄 Gambar Captcha berubah, mencoba auto-solve...");
 
                 try {
                   const titleClient = await page.target().createCDPSession();
@@ -824,7 +897,7 @@ async function loginShopee(email, password, index) {
 
                   if (nodeId) {
                     await titleClient.send('Runtime.evaluate', {
-                      expression: `document.querySelector('${selectorTitleCaptcha}').innerText = '${teksBaru}'`,
+                      expression: `document.querySelector('${selectorTitleCaptcha}').innerText = '[AUTO] Sedang menghitung jarak...'`,
                       returnByValue: true
                     });
                   }
@@ -832,6 +905,103 @@ async function loginShopee(email, password, index) {
                 } catch (e) {
                   console.log(`❌ Gagal update title captcha via CDP.`);
                 }
+
+                // --- AUTO SOLVER LOGIC ---
+                try {
+                  // Wait for the puzzle piece to load
+                  await delay(2000); // give the images a moment to fully render
+
+                  // Get images via page evaluate to handle base64 or blob parsing
+                  const bgUrl = await page.$eval(selectorImg, img => img.src).catch(() => null);
+                  const puzzleUrl = await page.$eval(selectorPuzzleImg, img => img.src).catch(() => null);
+
+                  if (bgUrl && puzzleUrl) {
+                    console.log("📥 Mengambil gambar base64...");
+                    const bgB64 = await getBase64ImageFromUrl(page, bgUrl);
+                    const puzzleB64 = await getBase64ImageFromUrl(page, puzzleUrl);
+
+                    if (bgB64 && puzzleB64) {
+                      console.log("🧠 Menganalisis puzzle...");
+                      // Original images on Shopee are typically wider. The puzzle area is around 340px
+                      // But the background might be scaled.
+                      // Let's compute offset via opencv-wasm
+                      let xOffset = await solveSliderCaptcha(bgB64, puzzleB64);
+
+                      // Sometimes we need a scale factor if the image displayed on screen
+                      // is smaller than the original image size downloaded.
+                      // Let's dynamically get the scale factor
+                      const scaleInfo = await page.evaluate((bgSel) => {
+                        const bgEl = document.querySelector(bgSel);
+                        if (bgEl) {
+                          return {
+                            renderedWidth: bgEl.getBoundingClientRect().width,
+                            naturalWidth: bgEl.naturalWidth || 340
+                          };
+                        }
+                        return { renderedWidth: 340, naturalWidth: 340 };
+                      }, selectorImg);
+
+                      const scaleRatio = scaleInfo.renderedWidth / scaleInfo.naturalWidth;
+
+                      const scaledOffset = Math.round(xOffset * scaleRatio);
+                      console.log(`🎯 Jarak ditemukan: ${xOffset}px (Skala: ${scaledOffset}px)`);
+
+                      // Get slider dimensions and position
+                      const sliderEl = await page.$(selectorSlider);
+                      if (sliderEl) {
+                        const box = await sliderEl.boundingBox();
+                        if (box) {
+                          const startX = box.x + box.width / 2;
+                          const startY = box.y + box.height / 2;
+
+                          // Execute human-like drag
+                          const client = await page.target().createCDPSession();
+                          await client.send("Input.dispatchMouseEvent", {
+                            type: "mouseMoved",
+                            x: startX,
+                            y: startY
+                          });
+                          await delay(100 + Math.random() * 50);
+
+                          await client.send("Input.dispatchMouseEvent", {
+                            type: "mousePressed",
+                            x: startX,
+                            y: startY,
+                            button: "left",
+                            clickCount: 1
+                          });
+                          await delay(100 + Math.random() * 50);
+
+                          const steps = 15;
+                          for (let i = 1; i <= steps; i++) {
+                            const currentTargetX = startX + (scaledOffset * (i / steps));
+                            const currentTargetY = startY + (Math.random() * 4 - 2); // slight vertical jitter
+                            await client.send("Input.dispatchMouseEvent", {
+                              type: "mouseMoved",
+                              x: currentTargetX,
+                              y: currentTargetY
+                            });
+                            await delay(20 + Math.random() * 30);
+                          }
+
+                          await delay(100 + Math.random() * 50);
+                          await client.send("Input.dispatchMouseEvent", {
+                            type: "mouseReleased",
+                            x: startX + scaledOffset,
+                            y: startY,
+                            button: "left",
+                            clickCount: 1
+                          });
+                          await client.detach();
+                          console.log("✅ Auto geser selesai");
+                        }
+                      }
+                    }
+                  }
+                } catch(err) {
+                  console.error("❌ Auto-solver error:", err.message);
+                }
+                // --- END AUTO SOLVER LOGIC ---
               }
             }
           }
