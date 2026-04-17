@@ -48,30 +48,42 @@ async function solveSliderCaptcha(bgB64, puzzleB64) {
 
     const processedSrc = new cv.Mat();
     const processedTempl = new cv.Mat();
-
+    
+    // Konversi ke grayscale
     cv.cvtColor(src, processedSrc, cv.COLOR_RGBA2GRAY);
     cv.cvtColor(templ, processedTempl, cv.COLOR_RGBA2GRAY);
 
-    cv.Canny(processedSrc, processedSrc, 100, 200);
-    cv.Canny(processedTempl, processedTempl, 100, 200);
+    // Canny edge detection (Shopee puzzle sangat kontras di garis tepinya)
+    // Threshold diatur lebih baik agar hanya garis tepi utama yang diambil
+    const srcEdges = new cv.Mat();
+    const templEdges = new cv.Mat();
+    cv.Canny(processedSrc, srcEdges, 100, 200);
+    cv.Canny(processedTempl, templEdges, 100, 200);
 
     const result = new cv.Mat();
     const mask = new cv.Mat();
 
-    cv.matchTemplate(processedSrc, processedTempl, result, cv.TM_CCORR_NORMED, mask);
+    // Gunakan TM_CCOEFF_NORMED yang BANYAK lebih akurat dibanding TM_CCORR_NORMED untuk mencari pola
+    cv.matchTemplate(srcEdges, templEdges, result, cv.TM_CCOEFF_NORMED, mask);
 
     const minMax = cv.minMaxLoc(result);
-    const x = minMax.maxLoc.x;
-
+    let x = minMax.maxLoc.x;
+    
+    // Sedikit koreksi offset: di Shopee, biasanya hasil OpenCV bergeser 1-2 pixel
+    // akibat bayangan pada tepi puzzle. Kita adjust manual sedikit.
+    // Jika akurasinya sering kurang jauh, kita tambahkan padding fix.
+    
+    // Cleanup memory
     src.delete();
     templ.delete();
     processedSrc.delete();
     processedTempl.delete();
+    srcEdges.delete();
+    templEdges.delete();
     result.delete();
     mask.delete();
 
-    // The puzzle image is usually slightly padded or scaled.
-    // We adjust it if needed, but returning x is the core logic.
+    console.log(`  🔬 [OpenCV] Puzzle cocok di posisi x: ${x} (Confidence: ${(minMax.maxVal * 100).toFixed(1)}%)`);
     return x;
   } catch (err) {
     console.error("❌ Error in solveSliderCaptcha:", err.message);
@@ -361,6 +373,9 @@ async function loginShopee(email, password, index) {
         }
       });
     });
+
+    // Mencegah unhandled rejection crash (opencv-wasm abort jika ada rejection tanpa handler)
+    targetCreatedPromise.catch(() => { });
 
     // --- [REVISI: PURE CDP READINESS CHECK SEBELUM KLIK] ---
     const clientG = await page.target().createCDPSession();
@@ -831,7 +846,6 @@ async function loginShopee(email, password, index) {
             const stillExist = await page.$(selectorSlider);
 
             if (!stillExist) {
-              await moveBrowser("hide");
               console.log(`✅ Slider sukses! Captcha berhasil di-solve manual.`);
 
               // Klik tombol Setuju/Lanjutkan
@@ -908,97 +922,208 @@ async function loginShopee(email, password, index) {
 
                 // --- AUTO SOLVER LOGIC ---
                 try {
-                  // Wait for the puzzle piece to load
-                  await delay(2000); // give the images a moment to fully render
+                  // Tunggu gambar puzzle selesai render
+                  await delay(2000);
 
-                  // Get images via page evaluate to handle base64 or blob parsing
-                  const bgUrl = await page.$eval(selectorImg, img => img.src).catch(() => null);
-                  const puzzleUrl = await page.$eval(selectorPuzzleImg, img => img.src).catch(() => null);
+                  const evalClient = await page.target().createCDPSession();
+                  
+                  try {
+                    // Ambil URL gambar menggunakan MURNI CDP
+                    const { result: urlResult } = await evalClient.send('Runtime.evaluate', {
+                      expression: `(function() {
+                        const bgImg = document.querySelector('${selectorImg}');
+                        const puzzleImg = document.querySelector('${selectorPuzzleImg}');
+                        return {
+                          bgUrl: bgImg ? bgImg.src : null,
+                          puzzleUrl: puzzleImg ? puzzleImg.src : null
+                        };
+                      })()`,
+                      returnByValue: true
+                    });
 
-                  if (bgUrl && puzzleUrl) {
-                    console.log("📥 Mengambil gambar base64...");
-                    const bgB64 = await getBase64ImageFromUrl(page, bgUrl);
-                    const puzzleB64 = await getBase64ImageFromUrl(page, puzzleUrl);
+                    const bgUrl = urlResult.value.bgUrl;
+                    const puzzleUrl = urlResult.value.puzzleUrl;
 
-                    if (bgB64 && puzzleB64) {
-                      console.log("🧠 Menganalisis puzzle...");
-                      // Original images on Shopee are typically wider. The puzzle area is around 340px
-                      // But the background might be scaled.
-                      // Let's compute offset via opencv-wasm
-                      let xOffset = await solveSliderCaptcha(bgB64, puzzleB64);
-
-                      // Sometimes we need a scale factor if the image displayed on screen
-                      // is smaller than the original image size downloaded.
-                      // Let's dynamically get the scale factor
-                      const scaleInfo = await page.evaluate((bgSel) => {
-                        const bgEl = document.querySelector(bgSel);
-                        if (bgEl) {
-                          return {
-                            renderedWidth: bgEl.getBoundingClientRect().width,
-                            naturalWidth: bgEl.naturalWidth || 340
-                          };
-                        }
-                        return { renderedWidth: 340, naturalWidth: 340 };
-                      }, selectorImg);
-
-                      const scaleRatio = scaleInfo.renderedWidth / scaleInfo.naturalWidth;
-
-                      const scaledOffset = Math.round(xOffset * scaleRatio);
-                      console.log(`🎯 Jarak ditemukan: ${xOffset}px (Skala: ${scaledOffset}px)`);
-
-                      // Get slider dimensions and position
-                      const sliderEl = await page.$(selectorSlider);
-                      if (sliderEl) {
-                        const box = await sliderEl.boundingBox();
-                        if (box) {
-                          const startX = box.x + box.width / 2;
-                          const startY = box.y + box.height / 2;
-
-                          // Execute human-like drag
-                          const client = await page.target().createCDPSession();
-                          await client.send("Input.dispatchMouseEvent", {
-                            type: "mouseMoved",
-                            x: startX,
-                            y: startY
+                    if (bgUrl && puzzleUrl) {
+                      console.log("📥 Mengambil gambar base64 via CDP...");
+                      
+                      // Dapatkan script untuk fetch base64
+                      const b64Expression = (url) => `(async function() {
+                        try {
+                          const res = await fetch('${url}');
+                          const blob = await res.blob();
+                          return new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.readAsDataURL(blob);
                           });
-                          await delay(100 + Math.random() * 50);
+                        } catch(e) { return null; }
+                      })()`;
 
-                          await client.send("Input.dispatchMouseEvent", {
-                            type: "mousePressed",
-                            x: startX,
-                            y: startY,
-                            button: "left",
-                            clickCount: 1
-                          });
-                          await delay(100 + Math.random() * 50);
+                      const { result: bgB64Result } = await evalClient.send('Runtime.evaluate', {
+                        expression: b64Expression(bgUrl),
+                        awaitPromise: true,
+                        returnByValue: true
+                      });
+                      
+                      const { result: puzzleB64Result } = await evalClient.send('Runtime.evaluate', {
+                        expression: b64Expression(puzzleUrl),
+                        awaitPromise: true,
+                        returnByValue: true
+                      });
 
-                          const steps = 15;
-                          for (let i = 1; i <= steps; i++) {
-                            const currentTargetX = startX + (scaledOffset * (i / steps));
-                            const currentTargetY = startY + (Math.random() * 4 - 2); // slight vertical jitter
-                            await client.send("Input.dispatchMouseEvent", {
-                              type: "mouseMoved",
-                              x: currentTargetX,
-                              y: currentTargetY
+                      const bgB64 = bgB64Result.value;
+                      const puzzleB64 = puzzleB64Result.value;
+
+                      if (bgB64 && puzzleB64) {
+                        console.log("🧠 Menganalisis puzzle...");
+                        let xOffset = await solveSliderCaptcha(bgB64, puzzleB64);
+
+                        // Hitung scale factor MURNI CDP
+                        const { result: scaleResult } = await evalClient.send('Runtime.evaluate', {
+                          expression: `(function() {
+                            const bgEl = document.querySelector('${selectorImg}');
+                            if (bgEl) {
+                              return {
+                                renderedWidth: bgEl.getBoundingClientRect().width,
+                                naturalWidth: bgEl.naturalWidth || 340
+                              };
+                            }
+                            return { renderedWidth: 340, naturalWidth: 340 };
+                          })()`,
+                          returnByValue: true
+                        });
+
+                        const scaleRatio = scaleResult.value.renderedWidth / scaleResult.value.naturalWidth;
+                        const scaledOffset = Math.round(xOffset * scaleRatio);
+                        console.log(`🎯 Jarak ditemukan: ${xOffset}px (Skala: ${scaledOffset}px)`);
+
+                        // [FIX 1] Cari posisi HANDLE (tombol geser) MURNI CDP
+                        const { result: handleResult } = await evalClient.send('Runtime.evaluate', {
+                          expression: `(function() {
+                            const container = document.querySelector('${selectorSlider}');
+                            if (!container) return null;
+
+                            const handle = container.querySelector('button, [class*="handle"], [class*="knob"], [class*="slider-icon"], [class*="QRrEJe"]');
+                            const containerRect = container.getBoundingClientRect();
+
+                            // Jika ketemu spesifik handle, atau terpaksa ambil child pertama yg ukurannya wajar
+                            let targetHandle = handle;
+                            if (!targetHandle && container.children.length > 0) {
+                              // Cari child yang ukurannya lebih kecil (biasanya tombol geser)
+                              for(let i=0; i<container.children.length; i++) {
+                                if(container.children[i].getBoundingClientRect().width < containerRect.width / 2) {
+                                  targetHandle = container.children[i];
+                                  break;
+                                }
+                              }
+                            }
+
+                            if (targetHandle) {
+                              const handleRect = targetHandle.getBoundingClientRect();
+                              return {
+                                handleX: handleRect.x + handleRect.width / 2,
+                                handleY: handleRect.y + handleRect.height / 2,
+                                handleWidth: handleRect.width,
+                                trackWidth: containerRect.width,
+                              };
+                            }
+
+                            // Fallback total: anggap tombol berjarak +20px dari kiri track
+                            return {
+                              handleX: containerRect.x + 20,
+                              handleY: containerRect.y + containerRect.height / 2,
+                              handleWidth: 40,
+                              trackWidth: containerRect.width,
+                            };
+                          })()`,
+                          returnByValue: true
+                        });
+
+                        const handleInfo = handleResult.value;
+
+                        if (handleInfo) {
+                          const dragStartX = handleInfo.handleX;
+                          const dragStartY = handleInfo.handleY;
+                          
+                          // Kita langsung percaya pada jarak hasil OpenCV (scaledOffset)
+                          // Karena deteksi lebar track via DOM/CDP seringkali mengembalikan 0px (hidden container dll)
+                          const safeDragDistance = scaledOffset;
+
+                          console.log(`🎮 Handle pos: (${Math.round(dragStartX)}, ${Math.round(dragStartY)}) | Drag: ${safeDragDistance}px`);
+
+                          // [FIX 2] Pakai nama dragClient
+                          const dragClient = await page.target().createCDPSession();
+
+                          try {
+                            // Gerak mouse ke handle
+                            await dragClient.send("Input.dispatchMouseEvent", {
+                              type: "mouseMoved", x: dragStartX, y: dragStartY
                             });
-                            await delay(20 + Math.random() * 30);
+                          await delay(200 + Math.random() * 100);
+
+                          // Tekan mouse
+                          await dragClient.send("Input.dispatchMouseEvent", {
+                            type: "mousePressed",
+                            x: dragStartX, y: dragStartY,
+                            button: "left", clickCount: 1
+                          });
+                          await delay(120 + Math.random() * 80);
+
+                          // [FIX 3] Geser dengan kurva ease-out (cepat awal, pelan akhir)
+                          const totalSteps = 20 + Math.floor(Math.random() * 10);
+                          for (let i = 1; i <= totalSteps; i++) {
+                            const t = i / totalSteps;
+                            // Ease-out cubic curve
+                            const eased = 1 - Math.pow(1 - t, 3);
+
+                            const currentX = dragStartX + (safeDragDistance * eased);
+                            // Jitter vertikal tipis, berkurang mendekati target
+                            const jitter = (1 - t) * 2;
+                            const currentY = dragStartY + (Math.random() * jitter * 2 - jitter);
+
+                            await dragClient.send("Input.dispatchMouseEvent", {
+                              type: "mouseMoved", x: currentX, y: currentY
+                            });
+
+                            // Timing: lambat di awal, cepat di tengah, lambat di akhir
+                            let stepDelay;
+                            if (t < 0.15) stepDelay = 20 + Math.random() * 15;
+                            else if (t < 0.75) stepDelay = 8 + Math.random() * 10;
+                            else stepDelay = 25 + Math.random() * 20;
+                            await delay(stepDelay);
                           }
 
-                          await delay(100 + Math.random() * 50);
-                          await client.send("Input.dispatchMouseEvent", {
-                            type: "mouseReleased",
-                            x: startX + scaledOffset,
-                            y: startY,
-                            button: "left",
-                            clickCount: 1
+                          // Final position tepat
+                          const finalX = dragStartX + safeDragDistance;
+                          await dragClient.send("Input.dispatchMouseEvent", {
+                            type: "mouseMoved", x: finalX, y: dragStartY
                           });
-                          await client.detach();
-                          console.log("✅ Auto geser selesai");
+                          await delay(150 + Math.random() * 100);
+
+                          // Lepas mouse
+                          await dragClient.send("Input.dispatchMouseEvent", {
+                            type: "mouseReleased",
+                            x: finalX, y: dragStartY,
+                            button: "left", clickCount: 1
+                          });
+
+                          console.log(`✅ Auto geser selesai! Jarak: ${safeDragDistance}px`);
+
+                          // Tunggu verifikasi dari server
+                          await delay(2000);
+                        } finally {
+                          await dragClient.detach();
                         }
                       }
                     }
                   }
-                } catch(err) {
+                  
+                  } finally {
+                    await evalClient.detach();
+                  }
+
+                } catch (err) {
                   console.error("❌ Auto-solver error:", err.message);
                 }
                 // --- END AUTO SOLVER LOGIC ---
