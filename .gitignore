@@ -1,0 +1,10 @@
+node_modules/
+.env
+*.log
+cookie/
+profile_edge/
+.DS_Store
+pdf/
+running_bot/
+checkpoint.json
+checkpoint.txt
