@@ -40,56 +40,159 @@ async function solveSliderCaptcha(bgB64, puzzleB64) {
     const bgJimp = await Jimp.read(bgBuf);
     const puzzleJimp = await Jimp.read(puzzleBuf);
 
-    const src = new cv.Mat(bgJimp.bitmap.height, bgJimp.bitmap.width, cv.CV_8UC4);
-    src.data.set(bgJimp.bitmap.data);
+    const bgW = bgJimp.bitmap.width;
+    const bgH = bgJimp.bitmap.height;
 
-    const templ = new cv.Mat(puzzleJimp.bitmap.height, puzzleJimp.bitmap.width, cv.CV_8UC4);
-    templ.data.set(puzzleJimp.bitmap.data);
+    // ============================================================
+    // Langkah 1: Pengambilan Gambar (Sudah dilakukan, menjadi cv.Mat)
+    // ============================================================
+    const srcBg = new cv.Mat(bgH, bgW, cv.CV_8UC4);
+    srcBg.data.set(bgJimp.bitmap.data);
 
-    const processedSrc = new cv.Mat();
-    const processedTempl = new cv.Mat();
+    const srcPuzzle = new cv.Mat(puzzleJimp.bitmap.height, puzzleJimp.bitmap.width, cv.CV_8UC4);
+    srcPuzzle.data.set(puzzleJimp.bitmap.data);
 
-    // Konversi ke grayscale
-    cv.cvtColor(src, processedSrc, cv.COLOR_RGBA2GRAY);
-    cv.cvtColor(templ, processedTempl, cv.COLOR_RGBA2GRAY);
+    // Cari bounding box puzzle (piksel non-transparan)
+    let minX = puzzleJimp.bitmap.width, maxX = 0;
+    let minY = puzzleJimp.bitmap.height, maxY = 0;
+    for (let y = 0; y < puzzleJimp.bitmap.height; y++) {
+      for (let x = 0; x < puzzleJimp.bitmap.width; x++) {
+        if (puzzleJimp.bitmap.data[(puzzleJimp.bitmap.width * y + x) << 2 | 3] > 10) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (minX >= maxX) { minX = 0; maxX = puzzleJimp.bitmap.width; }
+    if (minY >= maxY) { minY = 0; maxY = puzzleJimp.bitmap.height; }
 
-    // Canny edge detection (Shopee puzzle sangat kontras di garis tepinya)
-    // Threshold diatur lebih baik agar hanya garis tepi utama yang diambil
-    const srcEdges = new cv.Mat();
-    const templEdges = new cv.Mat();
-    cv.Canny(processedSrc, srcEdges, 100, 200);
-    cv.Canny(processedTempl, templEdges, 100, 200);
+    const cropWidth = maxX - minX;
+    const cropHeight = maxY - minY;
 
-    const result = new cv.Mat();
-    const mask = new cv.Mat();
+    // Crop puzzle sesuai bounding box
+    const rectPuzzle = new cv.Rect(minX, minY, cropWidth, cropHeight);
+    const croppedPuzzle = srcPuzzle.roi(rectPuzzle);
 
-    // Gunakan TM_CCOEFF_NORMED yang BANYAK lebih akurat dibanding TM_CCORR_NORMED untuk mencari pola
-    cv.matchTemplate(srcEdges, templEdges, result, cv.TM_CCOEFF_NORMED, mask);
+    // ============================================================
+    // Langkah 2: Konversi ke Grayscale (Skala Abu-abu)
+    // ============================================================
+    const grayBg = new cv.Mat();
+    const grayPuzzle = new cv.Mat();
+    cv.cvtColor(srcBg, grayBg, cv.COLOR_RGBA2GRAY);
+    cv.cvtColor(croppedPuzzle, grayPuzzle, cv.COLOR_RGBA2GRAY);
 
-    const minMax = cv.minMaxLoc(result);
-    let x = minMax.maxLoc.x;
 
-    // Sedikit koreksi offset: di Shopee, biasanya hasil OpenCV bergeser 1-2 pixel
-    // akibat bayangan pada tepi puzzle. Kita adjust manual sedikit.
-    // Jika akurasinya sering kurang jauh, kita tambahkan padding fix.
 
-    // Cleanup memory
-    src.delete();
-    templ.delete();
-    processedSrc.delete();
-    processedTempl.delete();
-    srcEdges.delete();
-    templEdges.delete();
-    result.delete();
-    mask.delete();
+    // ============================================================
+    // Langkah 3: Temukan Puzzle Asli & Filter Canny
+    // ============================================================
+    // 1. Cari posisi puzzle asli di background menggunakan grayscale
+    const resOrig = new cv.Mat();
+    const maskDummy = new cv.Mat();
+    cv.matchTemplate(grayBg, grayPuzzle, resOrig, cv.TM_CCOEFF_NORMED, maskDummy);
 
-    console.log(`  🔬 [OpenCV] Puzzle cocok di posisi x: ${x} (Confidence: ${(minMax.maxVal * 100).toFixed(1)}%)`);
-    return x;
+    let originalX = 0;
+    let maxOrigVal = -Infinity;
+    let searchYStart = Math.max(0, minY - 3);
+    let searchYEnd = Math.min(resOrig.rows - 1, minY + 3);
+    if (searchYStart > searchYEnd) { searchYStart = 0; searchYEnd = resOrig.rows - 1; }
+
+    for (let y = searchYStart; y <= searchYEnd; y++) {
+      for (let x = 0; x < resOrig.cols; x++) {
+        const val = resOrig.floatPtr(y, x)[0];
+        if (val > maxOrigVal) { maxOrigVal = val; originalX = x; }
+      }
+    }
+
+    // 2. Buat Edge Detection (Canny)
+    const edgeBg = new cv.Mat();
+    const edgePuzzle = new cv.Mat();
+    cv.Canny(grayBg, edgeBg, 50, 150);
+    cv.Canny(grayPuzzle, edgePuzzle, 50, 150);
+
+    // 3. HAPUS garis tepi (edges) milik puzzle asli dari edgeBg
+    // Kita hapus sedikit lebih lebar agar tidak ada sisa garis
+    const pt1 = new cv.Point(Math.max(0, originalX - 8), 0);
+    const pt2 = new cv.Point(Math.min(edgeBg.cols, originalX + cropWidth + 8), edgeBg.rows);
+    cv.rectangle(edgeBg, pt1, pt2, new cv.Scalar(0, 0, 0, 255), cv.FILLED);
+
+    // ============================================================
+    // Langkah 4: Cari Lubang (Hole) di sisa Edge
+    // ============================================================
+    const resHole = new cv.Mat();
+    cv.matchTemplate(edgeBg, edgePuzzle, resHole, cv.TM_CCOEFF_NORMED, maskDummy);
+
+    let bestX = 0;
+    let maxVal = -Infinity;
+
+    // Cari lubang di sisa gambar
+    for (let y = searchYStart; y <= searchYEnd; y++) {
+      for (let x = 0; x < resHole.cols; x++) {
+        const val = resHole.floatPtr(y, x)[0];
+        if (val > maxVal) {
+          maxVal = val;
+          bestX = x;
+        }
+      }
+    }
+
+    // Jarak geser = (Koordinat X target) - (Koordinat X awal slider/puzzle)
+    // Puzzle awalnya ada di x = minX (titik paling kiri puzzle yang valid)
+    const finalOffset = Math.max(0, bestX - minX);
+
+    console.log(`  🎯 [OpenCV] Target X=${bestX}, Puzzle awal X=${minX} -> Jarak Geser: ${finalOffset}px (Conf: ${(maxVal * 100).toFixed(1)}%)`);
+
+    // Clean up memori OpenCV
+    srcBg.delete(); srcPuzzle.delete(); croppedPuzzle.delete();
+    grayBg.delete(); grayPuzzle.delete();
+    resOrig.delete(); maskDummy.delete();
+    edgeBg.delete(); edgePuzzle.delete();
+    resHole.delete();
+
+    // ============================================================
+    // DEBUG: Simpan gambar untuk pengecekan
+    // ============================================================
+    try {
+      global._captchaCount = (global._captchaCount || 0) + 1;
+      const n = global._captchaCount;
+      const ts = Date.now();
+      const dbgDir = path.resolve(__dirname, 'log_auto_resolve');
+      if (!fs.existsSync(dbgDir)) fs.mkdirSync(dbgDir, { recursive: true });
+
+      await bgJimp.clone().write(path.join(dbgDir, `captcha_${n}_${ts}_bg.png`));
+      await puzzleJimp.clone().write(path.join(dbgDir, `captcha_${n}_${ts}_puzzle.png`));
+
+      // Visualisasi jawaban pada background
+      const annotated = bgJimp.clone();
+
+      // Gambar garis putih vertikal pada X target yang ditemukan
+      if (bestX >= 0 && bestX < bgW) {
+        for (let y = 0; y < bgH; y++) {
+          const idx = (bgW * y + bestX) << 2;
+          annotated.bitmap.data[idx] = 255;
+          annotated.bitmap.data[idx + 1] = 255;
+          annotated.bitmap.data[idx + 2] = 255;
+        }
+      }
+
+      await annotated.write(path.join(dbgDir, `captcha_${n}_${ts}_annotated.png`));
+    } catch (eSave) {
+      console.log(`  ⚠️ Gagal simpan gambar debug: ${eSave.message}`);
+    }
+
+    return finalOffset;
+
   } catch (err) {
-    console.error("❌ Error in solveSliderCaptcha:", err.message);
+    console.error("❌ Error in solveSliderCaptcha:", typeof err.message === 'object' ? JSON.stringify(err.message, null, 2) : err.message);
     return 0;
   }
 }
+
+
+
+
 
 moment.tz.setDefault("Asia/Jakarta");
 
@@ -121,13 +224,27 @@ if (process.platform === 'linux') {
 
 // ================= CONTOH EMAIL & PASSWORD (GANTI DENGAN DATA ASLI) =================
 const ACCOUNTS = [
-  { email: "hanifuyhoraah170426@gpsdhokgama.com", password: "MandalaROBBY304$" },
+  { email: "muiszuddinyamsih040526@gpsdhokgama.com", password: "MandalaROBBY304$" },
 ];
 
 // ================= UTIL =================
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 if (!fs.existsSync(COOKIE_DIR)) fs.mkdirSync(COOKIE_DIR);
+
+// ================= LOG_AUTO_RESOLVE SETUP =================
+const LOG_RESOLVE_DIR = path.resolve(__dirname, 'log_auto_resolve');
+if (!fs.existsSync(LOG_RESOLVE_DIR)) fs.mkdirSync(LOG_RESOLVE_DIR, { recursive: true });
+
+// Intercept console.log & console.error → tulis ke log.txt
+const _logFile = fs.createWriteStream(path.join(LOG_RESOLVE_DIR, 'log.txt'), { flags: 'a' });
+const _logPrefix = () => `[${moment().format('YYYY-MM-DD HH:mm:ss')}] `;
+const _origLog = console.log.bind(console);
+const _origErr = console.error.bind(console);
+console.log = (...a) => { _origLog(...a); _logFile.write(_logPrefix() + a.map(String).join(' ') + '\n'); };
+console.error = (...a) => { _origErr(...a); _logFile.write(_logPrefix() + '[ERROR] ' + a.map(String).join(' ') + '\n'); };
+
+global._captchaCount = 0;
 
 // ================= LOGIN SHOPEE =================
 async function loginShopee(email, password, index) {
@@ -977,6 +1094,8 @@ async function loginShopee(email, password, index) {
 
                       if (bgB64 && puzzleB64) {
                         console.log("🧠 Menganalisis puzzle...");
+                        // Pastikan variabel counter global terupdate
+                        global._captchaCount = (global._captchaCount || 0) + 1;
                         let xOffset = await solveSliderCaptcha(bgB64, puzzleB64);
 
                         // Hitung scale factor MURNI CDP
@@ -1070,36 +1189,62 @@ async function loginShopee(email, password, index) {
                             });
                             await delay(120 + Math.random() * 80);
 
-                            // [FIX 3] Geser dengan kurva ease-out (cepat awal, pelan akhir)
-                            const totalSteps = 20 + Math.floor(Math.random() * 10);
-                            for (let i = 1; i <= totalSteps; i++) {
-                              const t = i / totalSteps;
-                              // Ease-out cubic curve
-                              const eased = 1 - Math.pow(1 - t, 3);
+                            // [FIX 3] Algoritma Drag Anti-Bot (Overshoot & Koreksi)
+                            // Manusia asli tidak bisa menggeser presisi langsung berhenti di target.
+                            // Biasanya akan bablas (overshoot) sedikit, lalu digeser mundur (koreksi).
 
-                              const currentX = dragStartX + (safeDragDistance * eased);
-                              // Jitter vertikal tipis, berkurang mendekati target
-                              const jitter = (1 - t) * 2;
-                              const currentY = dragStartY + (Math.random() * jitter * 2 - jitter);
+                            const overshoot = 5 + Math.random() * 10; // Bablas 5-15 piksel
+                            const peakX = dragStartX + safeDragDistance + overshoot;
+
+                            // Fase 1: Geser Cepat ke titik Overshoot
+                            let steps = 15 + Math.floor(Math.random() * 10);
+                            for (let i = 1; i <= steps; i++) {
+                              const t = i / steps;
+                              // Fungsi ease-out sine agar natural
+                              const eased = Math.sin(t * (Math.PI / 2));
+                              const currentX = dragStartX + (peakX - dragStartX) * eased;
+
+                              // Jitter vertikal natural
+                              const currentY = dragStartY + (Math.random() * 2 - 1);
 
                               await dragClient.send("Input.dispatchMouseEvent", {
                                 type: "mouseMoved", x: currentX, y: currentY
                               });
-
-                              // Timing: lambat di awal, cepat di tengah, lambat di akhir
-                              let stepDelay;
-                              if (t < 0.15) stepDelay = 20 + Math.random() * 15;
-                              else if (t < 0.75) stepDelay = 8 + Math.random() * 10;
-                              else stepDelay = 25 + Math.random() * 20;
-                              await delay(stepDelay);
+                              await delay(10 + Math.random() * 15);
                             }
 
-                            // Final position tepat
+                            // Fase 2: Jeda singkat karena mata manusia menyadari kelewatan
+                            await delay(100 + Math.random() * 150);
+
+                            // Fase 3: Koreksi pelan-pelan mundur ke target asli
                             const finalX = dragStartX + safeDragDistance;
+                            steps = 5 + Math.floor(Math.random() * 5);
+                            for (let i = 1; i <= steps; i++) {
+                              const t = i / steps;
+                              const currentX = peakX - (peakX - finalX) * t;
+                              const currentY = dragStartY + (Math.random() * 1.5 - 0.75);
+
+                              await dragClient.send("Input.dispatchMouseEvent", {
+                                type: "mouseMoved", x: currentX, y: currentY
+                              });
+                              await delay(30 + Math.random() * 30);
+                            }
+
+                            // Pastikan titik akhir tepat
                             await dragClient.send("Input.dispatchMouseEvent", {
                               type: "mouseMoved", x: finalX, y: dragStartY
                             });
-                            await delay(150 + Math.random() * 100);
+                            await delay(200 + Math.random() * 150);
+
+                            // SCREENSHOT HTML SAAT RESOLVE (SETELAH DIGESER, SEBELUM DILEPAS)
+                            const dbgDir = path.resolve(__dirname, 'log_auto_resolve');
+                            if (!fs.existsSync(dbgDir)) fs.mkdirSync(dbgDir, { recursive: true });
+                            try {
+                              await page.screenshot({ path: path.join(dbgDir, `captcha_${global._captchaCount}_screenshot_dragged.png`), fullPage: false });
+                              console.log(`📸 Screenshot HTML saat digeser disimpan!`);
+                            } catch (eScreen) {
+                              console.log(`⚠️ Gagal screenshot: ${eScreen.message}`);
+                            }
 
                             // Lepas mouse
                             await dragClient.send("Input.dispatchMouseEvent", {

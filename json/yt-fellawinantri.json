@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "yt-fellawinantri",
+  "private_key_id": "91166dd9bf3665cac7bff4b0e18d4b17e37554bc",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQD1eWnZiBOEqw+Z\n8zqRs86Ld16NVuQybYAtvMvmbY0UFFQtQp/JuX3qgIrgmI22ngHBF12rO0ueNMUe\ndBqV8Eml74l3EyKfqVij/aZrrW/f5PNIZcwW86RB3vq7adD+/ITn53YM1T3XabHl\nVsGQ8UYKyvQEd5PxAhQu7EZCJFNJjAYbzf0+EYCpYjrqS3aA1eFAZU5w2yn7eiwJ\nm4U8ieX45aQ27T6h3WwVbqpwlzIEMSSa+EZhnpssbJVXmUv5NQVkPxd9LY27YdhI\nDI8yn2da3Jn7rRaqNtmWAuz+KibmnM7eIOKmS4KZAj5Z7bNeCyNsjxkEkfZuONeT\nUSS8CC+fAgMBAAECggEAcUzV72KgZ6aw78TVLrUIS1UQXjpR33itJe8zSasc57yu\nUamjqO8l0Bv+fcXL+xMZCi+nu0YGFAKVTQYX00byJ1XVZBF/9KOsVxzXOHH35iZ9\np9fciGdyVDkAD4q6vUZ+ba9mzGuMPKX7Rzhw5V6Hjqm4UWuD7ESiXjoN/69WheXk\n7XPyVAmDmeb4YoVwdsTb3KpnPFrP6J5GyNocuWhputC1UQBclUvvuSVuhfbXb/3d\njBWVXeUJjfV5bJBz0Pg/MvF5oow322cNOkE0K/MdrdywbNFzK4+48c//g+bSk5Q1\nAdCdZV7/E1BiN1qBpsqupFnxzUh3YNqIu6eW4E4q8QKBgQD8TEdNjNbQwN36bP/z\nKRnZi5hPq2fYrwl45+C4KrL+aKkkA03W8UzuCHlvYPAqTKX0Y8S7CoGMwysAbX5d\nZvThVo7GW+dHsFHTr3yKSpx4VKWcrpXsTm2Hzj2UdcucIR0rN4joh0Evb1wZH5D4\nr/JkmeGhp6I8S4f3oUSZj21r6QKBgQD5E4CyP5AVMOWGNEbkcB9UpfIfpNvTdzph\nVbx69wB5XRTq9SAfqcogODp4VJ+hR/jkDFoDgO9GkFR8KNwsxXxNst/Dun3UksTc\nQh3u4CWVsCaI52p+Pp1zc1F1PYcABAaWM+WH7/ceSoheJydCZm2rON93A51d/sHj\nm8GxDCXyRwKBgFVg8tg5ixCF1BjE/jCpfgfyh46ecLwRL+Fshs2MFZqmjGaVf6f3\nbJM45u9cHKoT2i1D/fVV7tVVzp2McDDngIMpKZPS0geekXJTdo/OA/lsm8bUBgQ7\n3jERCCHPYyHoytgvKPOXoeWNh9swpXyi/iIxOPvdoLdK0C5qsq5MrTjRAoGBAMUE\nLzVPX+nTLoqUSUsigTXUuYtcPOGtGompZpghTsew3/3l/Q3uoMoRj/ZkgYvyQSYp\nuv2wfBPl0F4Rd+8WGvfeuG660hNWMM9EoSa1OCWKG0EJQ8wuPR74JYPGMkXJ6Wfg\nDvwSzPax3+IRuFUmbjMUnnYmbtDN1ZHzPyeLQ2y7AoGBAJkgRVLMkJ9PhOm5PrhX\nSPHf/6GkeoSqz6J9ZM+CArb57k8AUaKfbbs7J2ue7NvYmFcwl523IE+Go478v+dD\nHEZgC4Yk/L2cuxluLI7ruN5CckM58r6iXFqoyHMbbNIKBo/ddNxq8jNLSNSnDeSO\nsZKjfWWA6E6frB0gQ4WrMFr3\n-----END PRIVATE KEY-----\n",
+  "client_email": "fellawinantri@yt-fellawinantri.iam.gserviceaccount.com",
+  "client_id": "114412663517397294455",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/fellawinantri%40yt-fellawinantri.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

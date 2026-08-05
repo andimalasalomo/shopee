@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "yt-basutiudia",
+  "private_key_id": "b2d28a355369b42ac36c870f486109cadac12bf2",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDakJ+MZJ0XlfCe\nej5+90T5KkjhWjAB8zyNL/yPC90RqbCrIb3D3z+fuvq+VbN9i5pTOIh3wy1hNVWM\nbDBXxErW1+pMj1ORTI/yPnw2ffPB05BwnrTIC/znyxAdqfL2T9A6LpvQdueWotnm\nbN4xomG7n/1nXdQpMdXg6LgUwzS5GxWjb/jzlAUqZU3RnmAbLQ8ghcI8/7g/prM6\nieENKkoN4z4wlpv0SsS1GpI3dni87hBSKZDLoesOslu8dxoS9VpmHrFLXSRyCyUK\n75fJ02GONlLe9UJQtDWBejG7qoSjySWIqv/ZhEnKRmJB1Ru8cYu/Wt5gzJ4f2k3+\nrWW+WDDFAgMBAAECggEAJjlTxeRUuuq8naKoamEJPYBBJbQ1oCmvZcvGIihDfdLM\n9GjevLI++MrlDkODtAmlsDc7WqKWPaFruDa1j6vjIMa7Ea+hQFCA/i8iXw9RAY1j\n/eYrnK7ICKuxQlbWCHC17G75ThB1eRk6/Xr9svWAnSUiVqEIuTmfe4mHpA3tmw+I\nHhXaFxfVvO7o/0UHxT44mTVi5yyxzxwgak2ztghHVGaee79W6G+PgQ6VSGuFDdNl\nlPmUBOYNSlZXoX1JKPUG0zDMDgiHFSoI0UJFaoHO9Jq2wsfXnD4REdKSSHOGnEqd\nkDn8pMsurOgC9uLE6FrDYoaop6+sIMROmAHZk3wIAQKBgQD9hR8wA7pjvI3t/aKf\nLH9Bp6c1sLy7oLu9f+3DaDRn+VYQ1COM9VThNsLaFyo6X3F1ADSvFwslLN+Ny6LL\nXdbJ28bgiS8RYPWF8NrJy+TAUpwzA1xEalzzlIarocAwWz+226qtO4E/h5EMZgmp\n2R6nALN7rAUThecLMY7CB3HMAQKBgQDcs/cPBwOMFNSYWCpHJCDYjVzVDyhUXufB\nECQ9dM4YYqkN/mMHfwXK//czBynY6LHbYbMacxxE1yTgo7Ht92Vww1ofKRE5s/9/\nmiEp3QbXrYsmwne8iFk3UZH4dZARy1FzhrHLIlUGFPMYqUQpmI0pcVaJpAJd0duZ\ndN9wXlY0xQKBgQDzvqPnpA32injjEnLiGwQW+bv4EP7EXptibLcKowuP09f9whiU\nE+QRzHa2/IKrMMyCszn0BXG/wk8Fo33XjVdPKLEjfIH2cYRdzN5uGkzK5CItodN6\nK9FGl8yLA68mTvUJOFX2zDlN/Wdlxk0QMiIYasIl65PN23Xx+ynIPyQYAQKBgQCW\nis8n2fHqeD73V5QnCJa6/9nlnrw0qLPOdhMyNF1sNsf3uqCT+WnbKTPWA7ngsgC3\nkvHXRdNvhY0rCZ2Ro2H3Q9lSTfHo+UV7JYgfhRtovIChRJ7l499vI129K3vFF3mM\nosDdvaJfTqTvGm5bLSqErUGJC21tz3rKNvU+Mar9vQKBgQDNoGoXU4mIUyLTIp4O\ntWpLqDSAdifNr3DIYN0/zC+5jVYVePCXrUmOXijxpjq3wOnOJ7J3dXSHrCFLJMc3\ntXkWIUrio4OZSO0iPeyyRwVvSSEDrA5ruGiUV1M51Dp3lDTZZ1BgcB/Rr+79ZXBA\n8nGHI7Idlh4f5DOCDuXPduTxTw==\n-----END PRIVATE KEY-----\n",
+  "client_email": "basutiudia@yt-basutiudia.iam.gserviceaccount.com",
+  "client_id": "103361002981587167141",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/basutiudia%40yt-basutiudia.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

@@ -35,9 +35,8 @@ if (TYPE_COOKIE === "MY") {
 let LOGIN_URL = `${BASE_URL}/buyer/login`;
 
 // EDGE ASLI
-const EDGE_PATH = process.platform === 'darwin'
-    ? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
-    : "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+const EDGE_PATH =
+    "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 
 // ================= UTIL =================
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -494,10 +493,10 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
         // --- INPUT EMAIL & PASSWORD ---
         try {
             // === 1. PROSES INPUT EMAIL ===
-            await newPage.waitForSelector('#identifierId', {
+            await newPage.waitForSelector('input[type="email"]', {
                 visible: true,
             });
-            await newPage.type('#identifierId', email, { delay: 100 });
+            await newPage.type('input[type="email"]', email, { delay: 100 });
             console.log(`✅ Email ${email} telah dimasukkan!`);
 
             await newPage.click("#identifierNext");
@@ -524,56 +523,58 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                 "❌ Terjadi kesalahan pada proses login Popup:",
                 err.message,
             );
-            throw new Error("Proses login Popup gagal: " + err.message);
         }
 
         await delay(2000);
 
         // ---------- TRICK: HANDLE 'I UNDERSTAND' & RE-LOGIN ----------
 
-        // 1 & 2. Cek 'I Understand' → klik → lalu cek 'Continue' secara sequential
-        // (bukan paralel, karena 'Continue' seringkali BARU muncul SETELAH 'I Understand' diklik)
+        // 1. Deteksi & Klik "I Understand" di Popup (Jika Muncul)
+        const clientConfirm = await newPage.target().createCDPSession();
+        // 1. Deklarasikan variabel status di awal agar bisa dibaca di mana saja
         let needReclick = false;
 
-        console.log("⚡ Mengecek tombol 'I Understand'...");
-        const startTimeIUnderstand = Date.now();
-
-        const confirmSelector =
-            "#gaplustosNext button, [id*='confirm'], [id*='tosNext'] button";
-
-        // --- STEP 1: Cek & Klik 'I Understand' ---
-        let iUnderstandClicked = false;
         try {
+            const confirmSelector =
+                "#gaplustosNext button, [id*='confirm'], [id*='tosNext'] button";
+
+            console.log("🔍 Mengecek tombol 'I Understand'...");
+
+            // Gunakan newPage (Tab Popup)
             const confirmButton = await newPage
-                .waitForSelector(confirmSelector, { timeout: 3000, visible: true })
+                .waitForSelector(confirmSelector, {
+                    timeout: 5000,
+                    visible: true,
+                })
                 .catch(() => null);
 
             if (confirmButton) {
-                console.log("📜 Tombol 'I Understand' ditemukan, melakukan klik...");
+                console.log("📜 Tombol ditemukan, melakukan klik...");
                 await confirmButton.click();
-                iUnderstandClicked = true;
+
+                // 2. Set nilainya menjadi true jika berhasil
+                needReclick = false;
                 console.log("✅ Tombol 'I Understand' berhasil diklik!");
-                // Tunggu DOM update setelah klik sebelum cek Continue
-                await delay(1500);
-            } else {
-                console.log("ℹ️ Tombol 'I Understand' tidak muncul, lanjut...");
+                await delay(3000);
             }
         } catch (err) {
-            console.log("ℹ️ Error saat cek/klik 'I Understand':", err.message);
+            console.log("ℹ️ Error saat klik confirm:", err.message);
+            // Jika error pun, kita bisa atur needReclick tetap false atau true tergantung kebutuhan
+            needReclick = false;
         }
 
-        // --- STEP 2: Cek 'Continue' / 'Lanjutkan' (FRESH, setelah klik I Understand) ---
-        // Timeout lebih lama jika I Understand baru diklik (halaman butuh waktu muat)
-        const continueTimeout = iUnderstandClicked ? 4000 : 3000;
+        // 2. Klik "Continue" (Jika muncul setelah pilih email di percobaan kedua)
+        // ---------- GOOGLE CONSENT ----------
         try {
             await newPage.waitForFunction(
-                () =>
-                    [...document.querySelectorAll("button")].some(
+                () => {
+                    return [...document.querySelectorAll("button")].some(
                         (b) =>
                             b.innerText.includes("Continue") ||
                             b.innerText.includes("Lanjutkan"),
-                    ),
-                { timeout: continueTimeout },
+                    );
+                },
+                { timeout: 10000 },
             );
 
             await newPage.evaluate(() => {
@@ -584,53 +585,19 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                 );
                 if (btn) btn.click();
             });
-            console.log("✅ Tombol Continue berhasil diklik!");
-        } catch (err) {
+
+            console.log("✅ Tombol Continue");
+        } catch {
             console.log("⚠️ Tombol Continue tidak muncul / timeout");
         }
 
-        await delay(1000); // Dikurangi dari 3000ms
-
-        // --- CEK: Apakah Google menampilkan pesan "Gagal login"? ---
-        try {
-            const isGoogleLoginFailed = await page.evaluate(() => {
-                const body = document.body?.innerText || "";
-                return (
-                    body.includes("Gagal untuk log in dengan Google") ||
-                    body.includes("Failed to log in with Google") ||
-                    body.includes("Couldn't sign you in") ||
-                    body.includes("Tidak dapat masuk")
-                );
-            });
-
-            if (isGoogleLoginFailed) {
-                console.log("⚠️ Popup Google menampilkan pesan gagal login → set needReclick = true");
-                needReclick = true;
-            }
-        } catch (err) {
-            console.log("ℹ️ Tidak bisa cek pesan gagal login (popup mungkin sudah tutup):", err.message);
-        }
+        await delay(3000);
 
         // 3. EKSEKUSI TRICK: KLIK ULANG TOMBOL GOOGLE DI SHOPEE
         if (needReclick) {
             console.log(
                 "🔄 Menjalankan Trik Re-Click: Klik Google untuk kedua kalinya...",
             );
-
-            // Navigasi page utama Shopee ke LOGIN_URL via CDP agar halaman fresh
-            console.log("🔃 Navigasi ulang ke LOGIN_URL via CDP...");
-            const clientNav = await page.target().createCDPSession();
-            try {
-                await clientNav.send("Page.navigate", { url: LOGIN_URL });
-                // Tunggu halaman selesai load
-                await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => { });
-                console.log("✅ Navigasi ke LOGIN_URL selesai.");
-            } catch (navErr) {
-                console.log("⚠️ Gagal navigasi CDP:", navErr.message);
-            } finally {
-                await clientNav.detach();
-            }
-
             await delay(2000);
 
             const finalClientG = await page.target().createCDPSession();
@@ -648,56 +615,15 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                 );
 
                 if (fNodeId) {
-                    const secondPopupPromise = new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => {
-                            browser.off("targetcreated", listener);
-                            reject(new Error("Timeout menunggu popup kedua (15 detik)"));
-                        }, 15000);
+                    const secondPopupPromise = new Promise((resolve) =>
+                        browser.once("targetcreated", (t) => resolve(t.page())),
+                    );
 
-                        const listener = async (t) => {
-                            if (t.type() !== "page") return; // Abaikan jika bukan page
-
-                            clearTimeout(timeout);
-                            browser.off("targetcreated", listener);
-
-                            try {
-                                const p = await t.page();
-
-                                // Tambahkan script untuk menghilangkan jejak webdriver
-                                const s = await p.target().createCDPSession();
-                                await s.send("Page.addScriptToEvaluateOnNewDocument", {
-                                    source: `
-                                        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                                    `,
-                                });
-
-                                resolve(p);
-                            } catch (err) {
-                                reject(err);
-                            }
-                        };
-
-                        browser.on("targetcreated", listener);
+                    const { model } = await finalClientG.send("DOM.getBoxModel", {
+                        nodeId: fNodeId,
                     });
-
-                    // Tambahkan retry/delay jika node belum punya box model
-                    let boxModel = null;
-                    for (let i = 0; i < 5; i++) {
-                        try {
-                            const { model } = await finalClientG.send("DOM.getBoxModel", { nodeId: fNodeId });
-                            boxModel = model;
-                            break;
-                        } catch (e) {
-                            await delay(1000);
-                        }
-                    }
-
-                    if (!boxModel) {
-                        throw new Error("Gagal mendapatkan koordinat tombol Google pada klik kedua.");
-                    }
-
-                    const xf = (boxModel.content[0] + boxModel.content[2]) / 2;
-                    const yf = (boxModel.content[1] + boxModel.content[5]) / 2;
+                    const xf = (model.content[0] + model.content[2]) / 2;
+                    const yf = (model.content[1] + model.content[5]) / 2;
 
                     await finalClientG.send("Input.dispatchMouseEvent", {
                         type: "mousePressed",
@@ -706,7 +632,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                         button: "left",
                         clickCount: 1,
                     });
-                    await delay(150);
+                    await delay(100);
                     await finalClientG.send("Input.dispatchMouseEvent", {
                         type: "mouseReleased",
                         x: xf,
@@ -716,7 +642,6 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                     });
 
                     // 2. TANGKAP POPUP KEDUA
-                    console.log("⏳ Menunggu popup kedua muncul...");
                     const secondPopup = await secondPopupPromise;
                     console.log("📱 Popup Pemilihan Email muncul.");
 
@@ -748,7 +673,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                                 if (nodeId) {
                                     emailAccountNodeId = nodeId;
                                 } else {
-                                    await delay(2000); // Beri waktu loading halaman
+                                    await delay(1000); // Beri waktu loading halaman
                                 }
                             } catch (domErr) {
                                 // Jika error "Could not find node", kita abaikan dan coba lagi di loop berikutnya
@@ -770,7 +695,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                                 x,
                                 y,
                             });
-                            await delay(1000);
+                            await delay(200);
                             await clientSelectEmail.send("Input.dispatchMouseEvent", {
                                 type: "mousePressed",
                                 x,
@@ -778,7 +703,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                                 button: "left",
                                 clickCount: 1,
                             });
-                            await delay(1000);
+                            await delay(100);
                             await clientSelectEmail.send("Input.dispatchMouseEvent", {
                                 type: "mouseReleased",
                                 x,
@@ -835,7 +760,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
             let setujuClicked = false;
             const startSetuju = Date.now();
 
-            while (Date.now() - startSetuju < 3000) { // Dikurangi dari 8000ms
+            while (Date.now() - startSetuju < 8000) {
                 // Timeout 8 detik
                 // Gunakan XPath untuk mencari tombol dengan teks variasi bahasa
                 const [btnSetuju] = await page.$$(
@@ -890,33 +815,13 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
             console.log("⚠️ Gagal memproses klik Setuju via CDP:", err.message);
         }
 
-        await delay(1000); // Dikurangi dari 3000ms
-
-        const elapsedIUnderstand = ((Date.now() - startTimeIUnderstand) / 1000).toFixed(2);
-        console.log(`⏱️ Durasi pengecekan paralel: ${elapsedIUnderstand} detik`);
+        await delay(3000);
 
         // ---------- CAPTCHA SCANNING (DEEP INTEGRATION) ----------
         console.log("⏳ Sinkronisasi Captcha/Verifikasi (Silent CDP Mode)...");
 
         // const captchaElement = await page.$("#captchaMask");
-        let captchaElement = null;
-
-        try {
-            console.log("⏳ Menunggu elemen captcha muncul (Timeout 10 detik)...");
-
-            // Menggunakan waitForSelector dengan selector h1 yang lebih kuat
-            captchaElement = await page.waitForSelector(
-                "#modal h1",
-                { timeout: 15000 }
-            );
-
-        } catch (error) {
-            // Jika dalam 10 detik elemen TIDAK muncul, blok ini akan berjalan
-            console.log("❌ Captcha tidak ditemukan setelah menunggu 10 detik.");
-            captchaElement = null;
-        }
-
-        console.log("Captcha Element:", captchaElement ? "Ditemukan" : "Tidak Ditemukan");
+        const captchaElement = await page.$("#modal > aside > div._9CE2ae > div > div:nth-child(2) > div > div.Qm81FR > h1");
 
         if (captchaElement) {
             let lastSrc = "";
@@ -927,10 +832,11 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
             let numPuzzleY = 0;
             let isAutoResolved = false;
 
-            const selectorImg = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(1) canvas";
-            const selectorPuzzle = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(2)";
-            const selectorPuzzleImg = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(2) canvas";
-            const selectorSlider = "#modal > aside > div.zXeIf4 > div > div:nth-child(2) > div > div.FZNPrV > div:nth-child(1) > div.BgdYXn > div.oNsK7m > div > div > div";
+            const selectorImg =
+                "#modal > aside > div._9CE2ae > div > div:nth-child(2) > div > div.mOMhvN > div:nth-child(1) > div.kzPOuc > div:nth-child(1) > img";
+            const selectorPuzzle = "#puzzleContainer";
+            const selectorPuzzleImg = "#puzzleImgComponent";
+            const selectorSlider = "#sliderContainer";
 
             await moveBrowser("show");
             console.log(
@@ -957,7 +863,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
 
                         if (!stillExist) {
                             console.log(`✅ [WORKER ${WORKER_ID}] Slider sukses!`);
-                            const resolveData = `${lastPuzzleStyle}\n\n${selectorSlider}\n${lastX};`;
+                            const resolveData = `${lastPuzzleStyle}\n\n#sliderContainer\n${lastX};`;
 
                             if (lastSrc) {
                                 const imgHash = crypto.createHash('md5').update(lastSrc).digest('hex');
@@ -969,11 +875,11 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                                     );
                                     console.log("✅ Data total_otomatis ditambah 1 di database.");
                                 } else {
-                                    // await pool.query(
-                                    //     "UPDATE captcha_shopee SET data_resolve = ?, puzzleX = ?, puzzleY = ?, sliderX = ?, status = 1 WHERE status = 0 AND image_hash = ?",
-                                    //     [resolveData, numPuzzleX, numPuzzleY, numSliderX, imgHash],
-                                    // );
-                                    // console.log("✅ Data resolve tersimpan ke database.");
+                                    await pool.query(
+                                        "UPDATE captcha_shopee SET data_resolve = ?, puzzleX = ?, puzzleY = ?, sliderX = ?, status = 1 WHERE status = 0 AND image_hash = ?",
+                                        [resolveData, numPuzzleX, numPuzzleY, numSliderX, imgHash],
+                                    );
+                                    console.log("✅ Data resolve tersimpan ke database.");
                                 }
                             }
 
@@ -1007,25 +913,21 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                         continue;
                     }
 
-                    // 2. MONITORING GAMBAR (BASE64) VIA CANVAS toDataURL
-                    let currentSrc = null;
-                    try {
-                        currentSrc = await page.evaluate((sel) => {
-                            const canvas = document.querySelector(sel);
-                            if (!canvas) return null;
+                    // 2. MONITORING SRC VIA CDP
+                    const nodeImg = await client
+                        .send("DOM.querySelector", {
+                            nodeId: root.nodeId,
+                            selector: selectorImg,
+                        })
+                        .catch(() => null);
 
-                            // Mengambil data murni dari buffer canvas, bebas dari efek rendering layar
-                            const dataUrl = canvas.toDataURL("image/png");
-
-                            // Jika canvas belum selesai digambar (kosong), string base64 akan sangat pendek (di bawah 1000 karakter)
-                            if (dataUrl.length < 5000) return null;
-
-                            return dataUrl;
-                        }, selectorImg);
-                    } catch (err) { }
-
-                    if (currentSrc) {
-                        if (currentSrc) { // Pengganti kurung kurawal if(srcIdx !== -1)
+                    if (nodeImg && nodeImg.nodeId) {
+                        const { attributes } = await client.send("DOM.getAttributes", {
+                            nodeId: nodeImg.nodeId,
+                        });
+                        const srcIdx = attributes.indexOf("src");
+                        if (srcIdx !== -1) {
+                            const currentSrc = attributes[srcIdx + 1];
 
 
                             if (currentSrc !== lastSrc) {
@@ -1083,12 +985,15 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
 
                                         const resolveData = cekCaptcha[0].data_resolve;
                                         const matchX = resolveData.match(
-                                            /#modal[\s\S]*?translateX\(([-.\d]+)px\)/,
+                                            /#sliderContainer[\s\S]*?translateX\(([-.\d]+)px\)/,
                                         );
 
-                                        let sliderXVal = cekCaptcha[0].sliderX;
-                                        if (sliderXVal != null && parseFloat(sliderXVal) !== 0) {
-                                            let distance = parseFloat(sliderXVal);
+                                        if (matchX && matchX[1]) {
+                                            let distance = parseFloat(matchX[1]);
+
+                                            if (distance <= 0) {
+                                                distance = parseFloat(cekCaptcha[0].sliderX);
+                                            }
 
                                             const sliderNode = await client
                                                 .send("DOM.querySelector", {
@@ -1197,23 +1102,16 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                     }
 
                     // 3. MONITORING LIVE (SILENT) + DETEKSI SALAH
-                    // Kita ganti memantau puzzle secara langsung karena elemen sliderContainer yang baru tidak bergerak
-                    const nodeP = await client
-                        .send("DOM.querySelector", {
-                            nodeId: root.nodeId,
-                            selector: selectorPuzzle,
-                        })
-                        .catch(() => null);
+                    const { attributes: attrSli } = await client.send(
+                        "DOM.getAttributes",
+                        { nodeId: sliderNode.nodeId },
+                    );
 
-                    if (nodeP && nodeP.nodeId) {
-                        const { attributes: aP } = await client.send(
-                            "DOM.getAttributes",
-                            { nodeId: nodeP.nodeId },
-                        );
-
-                        const sP = aP[aP.indexOf("style") + 1] || "";
-                        const currentX = sP.match(/translateX\([^)]+\)/)?.[0] || "translateX(0px)";
-                        const pY = sP.match(/translateY\([^)]+\)/)?.[0] || "translateY(0px)";
+                    const styleIdxS = attrSli.indexOf("style");
+                    if (styleIdxS !== -1) {
+                        const styleValS = attrSli[styleIdxS + 1];
+                        const currentX =
+                            styleValS.match(/translateX\([^)]+\)/)?.[0] || "translateX(0px)";
 
                         if (currentX !== lastX) {
                             if (
@@ -1225,14 +1123,14 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                                 lastX = currentX;
 
                                 const matchX = currentX.match(/translateX\(([-\d.]+)px\)/);
-                                const matchY = pY.match(/translateY\(([-\d.]+)px\)/);
+                                if (matchX) numSliderX = parseFloat(matchX[1]);
 
-                                if (matchX) numPuzzleX = parseFloat(matchX[1]);
-                                if (matchY) numPuzzleY = parseFloat(matchY[1]);
-
-                                numSliderX = numPuzzleX; // Asumsikan pergeseran slider sama dengan puzzle
-
-                                let pR = "rotate(0deg)";
+                                const nodeP = await client
+                                    .send("DOM.querySelector", {
+                                        nodeId: root.nodeId,
+                                        selector: selectorPuzzle,
+                                    })
+                                    .catch(() => null);
                                 const nodePI = await client
                                     .send("DOM.querySelector", {
                                         nodeId: root.nodeId,
@@ -1240,16 +1138,33 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                                     })
                                     .catch(() => null);
 
-                                if (nodePI && nodePI.nodeId) {
+                                if (nodeP && nodePI) {
+                                    const { attributes: aP } = await client.send(
+                                        "DOM.getAttributes",
+                                        { nodeId: nodeP.nodeId },
+                                    );
                                     const { attributes: aPI } = await client.send(
                                         "DOM.getAttributes",
                                         { nodeId: nodePI.nodeId },
                                     );
+                                    const sP = aP[aP.indexOf("style") + 1] || "";
                                     const sPI = aPI[aPI.indexOf("style") + 1] || "";
-                                    pR = sPI.match(/rotate\([^)]+\)/)?.[0] || "rotate(0deg)";
-                                }
 
-                                lastPuzzleStyle = `#puzzleContainer\n${currentX}\n${pY}\ntransform: ${pR}`;
+                                    const pX =
+                                        sP.match(/translateX\([^)]+\)/)?.[0] || "translateX(0px)";
+                                    const pY =
+                                        sP.match(/translateY\([^)]+\)/)?.[0] || "translateY(0px)";
+                                    const pR =
+                                        sPI.match(/rotate\([^)]+\)/)?.[0] || "rotate(0deg)";
+                                    lastPuzzleStyle = `#puzzleContainer\n${pX}\n${pY}\ntransform: ${pR}`;
+
+                                    const matchPX = pX.match(/translateX\(([-\d.]+)px\)/);
+                                    const matchPY = pY.match(/translateY\(([-\d.]+)px\)/);
+                                    if (matchPX) numPuzzleX = parseFloat(matchPX[1]);
+                                    if (matchPY) numPuzzleY = parseFloat(matchPY[1]);
+
+                                    lastPuzzleStyle = `#puzzleContainer\n${pX}\n${pY}\ntransform: ${pR}`;
+                                }
                             }
                         }
                     }
@@ -1349,18 +1264,10 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
             "SELECT * FROM setting_shopee WHERE id = 1",
         );
 
-        TYPE_COOKIE = settingRows[0].type_cookie;
-
-        let MAX_ACCOUNT_COOKIE = settingRows[0].max_account_cookie;
-
         if (settingRows[0].status_server === "ON") {
             console.log("Stop dikarenakan status server ON");
             await delay(5000);
             process.exit(0);
-        } else {
-            settingRows[0].max_cookie = process.env.MAX_COOKIE;
-            TYPE_COOKIE = process.env.TYPE_COOKIE || "ID";
-            MAX_ACCOUNT_COOKIE = process.env.MAX_ACCOUNT_COOKIE;
         }
 
         if (settingRows[0].max_cookie <= WORKER_ID) {
@@ -1370,6 +1277,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
         }
 
         //start set lang cookie
+        TYPE_COOKIE = settingRows[0].type_cookie;
         BASE_URL = "https://shopee.co.id";
         SHOPEE_LANG = "id";
 
@@ -1382,6 +1290,8 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
         }
         LOGIN_URL = `${BASE_URL}/buyer/login`;
         //end set lang cookie
+
+        const MAX_ACCOUNT_COOKIE = settingRows[0].max_account_cookie;
 
         let end_date_time = moment().format("YYYY-MM-DD HH:mm:ss");
         const diff = moment(end_date_time).diff(moment(start_date_time), "minutes");

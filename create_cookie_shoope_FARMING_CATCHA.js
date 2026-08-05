@@ -158,6 +158,21 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
     fs.mkdirSync(uniqueProfilePath, { recursive: true });
   }
 
+  // Trik ganti nama "Profile 1" bawaan Edge menjadi "WORKER X"
+  try {
+    const localStatePath = path.join(uniqueProfilePath, 'Local State');
+    const localStateData = { profile: { info_cache: { Default: { name: `WORKER ${WORKER_ID}` } } } };
+    fs.writeFileSync(localStatePath, JSON.stringify(localStateData));
+
+    const defaultDir = path.join(uniqueProfilePath, 'Default');
+    if (!fs.existsSync(defaultDir)) fs.mkdirSync(defaultDir, { recursive: true });
+    const prefsPath = path.join(defaultDir, 'Preferences');
+    const prefsData = { profile: { name: `WORKER ${WORKER_ID}` } };
+    fs.writeFileSync(prefsPath, JSON.stringify(prefsData));
+  } catch (err) {
+    // Abaikan jika gagal
+  }
+
   const browser = await puppeteer.launch({
     headless: false,
     defaultViewport: null,
@@ -355,35 +370,42 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
     // 1. PASANG PERANGKAP (Menunggu Popup Muncul secara Normal)
 
     const targetCreatedPromise = new Promise((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Popup Timeout")),
-        15000,
-      );
+      const timeout = setTimeout(() => {
+        browser.off("targetcreated", listener);
+        reject(new Error("Popup Timeout"));
+      }, 15000);
 
-      // Menggunakan event targetcreated adalah standar industri yang aman,
-      // tapi rahasianya ada di apa yang kita lakukan SETELAH target tercipta.
-      browser.once("targetcreated", async (target) => {
+      const listener = async (target) => {
         if (target.type() !== "page") return;
+
+        clearTimeout(timeout);
+        browser.off("targetcreated", listener);
 
         try {
           const newPage = await target.page();
-
-          // --- TRICK CDP: Mematikan deteksi automation di jendela baru ---
           const session = await target.createCDPSession();
 
-          // Gunakan CDP untuk menghapus jejak webdriver di popup secara paksa
+          // Gunakan CDP untuk menghapus jejak webdriver di popup secara paksa & Ganti Title
           await session.send("Page.addScriptToEvaluateOnNewDocument", {
             source: `
                     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                    setInterval(() => {
+                      const prefix = "[WORKER ${WORKER_ID}]";
+                      if (!document.title.startsWith(prefix)) {
+                        document.title = prefix + " - " + document.title.replace(/^\\[WORKER \\d+\\] - /, "");
+                      }
+                    }, 500);
                 `,
           });
 
-          clearTimeout(timeout);
           resolve(newPage);
         } catch (e) {
           console.log("Gagal mengamankan popup via CDP:", e.message);
+          resolve(null); // resolve with null so it can be caught
         }
-      });
+      };
+
+      browser.on("targetcreated", listener);
     });
 
     // --- [REVISI: PURE CDP READINESS CHECK SEBELUM KLIK] ---
@@ -493,13 +515,15 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
       console.log("❌ Popup tidak muncul:", err.message);
     }
 
+    // await delay(99999);
+
     // --- INPUT EMAIL & PASSWORD ---
     try {
       // === 1. PROSES INPUT EMAIL ===
-      await newPage.waitForSelector('input[type="email"]', {
+      await newPage.waitForSelector('#identifierId', {
         visible: true,
       });
-      await newPage.type('input[type="email"]', email, { delay: 100 });
+      await newPage.type('#identifierId', email, { delay: 100 });
       console.log(`✅ Email ${email} telah dimasukkan!`);
 
       await newPage.click("#identifierNext");
@@ -526,58 +550,56 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
         "❌ Terjadi kesalahan pada proses login Popup:",
         err.message,
       );
+      throw new Error("Proses login Popup gagal: " + err.message);
     }
 
     await delay(2000);
 
     // ---------- TRICK: HANDLE 'I UNDERSTAND' & RE-LOGIN ----------
 
-    // 1. Deteksi & Klik "I Understand" di Popup (Jika Muncul)
-    const clientConfirm = await newPage.target().createCDPSession();
-    // 1. Deklarasikan variabel status di awal agar bisa dibaca di mana saja
+    // 1 & 2. Cek 'I Understand' → klik → lalu cek 'Continue' secara sequential
+    // (bukan paralel, karena 'Continue' seringkali BARU muncul SETELAH 'I Understand' diklik)
     let needReclick = false;
 
+    console.log("⚡ Mengecek tombol 'I Understand'...");
+    const startTimeIUnderstand = Date.now();
+
+    const confirmSelector =
+      "#gaplustosNext button, [id*='confirm'], [id*='tosNext'] button";
+
+    // --- STEP 1: Cek & Klik 'I Understand' ---
+    let iUnderstandClicked = false;
     try {
-      const confirmSelector =
-        "#gaplustosNext button, [id*='confirm'], [id*='tosNext'] button";
-
-      console.log("🔍 Mengecek tombol 'I Understand'...");
-
-      // Gunakan newPage (Tab Popup)
       const confirmButton = await newPage
-        .waitForSelector(confirmSelector, {
-          timeout: 5000,
-          visible: true,
-        })
+        .waitForSelector(confirmSelector, { timeout: 3000, visible: true })
         .catch(() => null);
 
       if (confirmButton) {
-        console.log("📜 Tombol ditemukan, melakukan klik...");
+        console.log("📜 Tombol 'I Understand' ditemukan, melakukan klik...");
         await confirmButton.click();
-
-        // 2. Set nilainya menjadi true jika berhasil
-        needReclick = false;
+        iUnderstandClicked = true;
         console.log("✅ Tombol 'I Understand' berhasil diklik!");
-        await delay(3000);
+        // Tunggu DOM update setelah klik sebelum cek Continue
+        await delay(1500);
+      } else {
+        console.log("ℹ️ Tombol 'I Understand' tidak muncul, lanjut...");
       }
     } catch (err) {
-      console.log("ℹ️ Error saat klik confirm:", err.message);
-      // Jika error pun, kita bisa atur needReclick tetap false atau true tergantung kebutuhan
-      needReclick = false;
+      console.log("ℹ️ Error saat cek/klik 'I Understand':", err.message);
     }
 
-    // 2. Klik "Continue" (Jika muncul setelah pilih email di percobaan kedua)
-    // ---------- GOOGLE CONSENT ----------
+    // --- STEP 2: Cek 'Continue' / 'Lanjutkan' (FRESH, setelah klik I Understand) ---
+    // Timeout lebih lama jika I Understand baru diklik (halaman butuh waktu muat)
+    const continueTimeout = iUnderstandClicked ? 4000 : 3000;
     try {
       await newPage.waitForFunction(
-        () => {
-          return [...document.querySelectorAll("button")].some(
+        () =>
+          [...document.querySelectorAll("button")].some(
             (b) =>
               b.innerText.includes("Continue") ||
               b.innerText.includes("Lanjutkan"),
-          );
-        },
-        { timeout: 10000 },
+          ),
+        { timeout: continueTimeout },
       );
 
       await newPage.evaluate(() => {
@@ -588,20 +610,54 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
         );
         if (btn) btn.click();
       });
-
-      console.log("✅ Tombol Continue");
-    } catch {
+      console.log("✅ Tombol Continue berhasil diklik!");
+    } catch (err) {
       console.log("⚠️ Tombol Continue tidak muncul / timeout");
     }
 
-    await delay(3000);
+    await delay(1000); // Dikurangi dari 3000ms
+
+    // --- CEK: Apakah Google menampilkan pesan "Gagal login"? ---
+    try {
+      const isGoogleLoginFailed = await page.evaluate(() => {
+        const body = document.body?.innerText || "";
+        return (
+          body.includes("Gagal untuk log in dengan Google") ||
+          body.includes("Failed to log in with Google") ||
+          body.includes("Couldn't sign you in") ||
+          body.includes("Tidak dapat masuk")
+        );
+      });
+
+      if (isGoogleLoginFailed) {
+        console.log("⚠️ Popup Google menampilkan pesan gagal login → set needReclick = true");
+        needReclick = true;
+      }
+    } catch (err) {
+      console.log("ℹ️ Tidak bisa cek pesan gagal login (popup mungkin sudah tutup):", err.message);
+    }
 
     // 3. EKSEKUSI TRICK: KLIK ULANG TOMBOL GOOGLE DI SHOPEE
     if (needReclick) {
       console.log(
         "🔄 Menjalankan Trik Re-Click: Klik Google untuk kedua kalinya...",
       );
-      await delay(2000);
+
+      // Navigasi page utama Shopee ke LOGIN_URL via CDP agar halaman fresh
+      console.log("🔃 Navigasi ulang ke LOGIN_URL via CDP...");
+      const clientNav = await page.target().createCDPSession();
+      try {
+        await clientNav.send("Page.navigate", { url: LOGIN_URL });
+        // Tunggu halaman selesai load
+        await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 15000 }).catch(() => { });
+        console.log("✅ Navigasi ke LOGIN_URL selesai.");
+      } catch (navErr) {
+        console.log("⚠️ Gagal navigasi CDP:", navErr.message);
+      } finally {
+        await clientNav.detach();
+      }
+
+      await delay(3000);
 
       const finalClientG = await page.target().createCDPSession();
       try {
@@ -618,15 +674,62 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
         );
 
         if (fNodeId) {
-          const secondPopupPromise = new Promise((resolve) =>
-            browser.once("targetcreated", (t) => resolve(t.page())),
-          );
+          const secondPopupPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              browser.off("targetcreated", listener);
+              reject(new Error("Timeout menunggu popup kedua (15 detik)"));
+            }, 15000);
 
-          const { model } = await finalClientG.send("DOM.getBoxModel", {
-            nodeId: fNodeId,
+            const listener = async (t) => {
+              if (t.type() !== "page") return; // Abaikan jika bukan page
+
+              clearTimeout(timeout);
+              browser.off("targetcreated", listener);
+
+              try {
+                const p = await t.page();
+
+                // Tambahkan script untuk menghilangkan jejak webdriver dan mengganti title popup kedua
+                const s = await p.target().createCDPSession();
+                await s.send("Page.addScriptToEvaluateOnNewDocument", {
+                  source: `
+                          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                          setInterval(() => {
+                            const prefix = "[WORKER ${WORKER_ID}]";
+                            if (!document.title.startsWith(prefix)) {
+                              document.title = prefix + " - " + document.title.replace(/^\\[WORKER \\d+\\] - /, "");
+                            }
+                          }, 500);
+                      `,
+                });
+
+                resolve(p);
+              } catch (err) {
+                reject(err);
+              }
+            };
+
+            browser.on("targetcreated", listener);
           });
-          const xf = (model.content[0] + model.content[2]) / 2;
-          const yf = (model.content[1] + model.content[5]) / 2;
+
+          // Tambahkan retry/delay jika node belum punya box model
+          let boxModel = null;
+          for (let i = 0; i < 5; i++) {
+            try {
+              const { model } = await finalClientG.send("DOM.getBoxModel", { nodeId: fNodeId });
+              boxModel = model;
+              break;
+            } catch (e) {
+              await delay(1000);
+            }
+          }
+
+          if (!boxModel) {
+            throw new Error("Gagal mendapatkan koordinat tombol Google pada klik kedua.");
+          }
+
+          const xf = (boxModel.content[0] + boxModel.content[2]) / 2;
+          const yf = (boxModel.content[1] + boxModel.content[5]) / 2;
 
           await finalClientG.send("Input.dispatchMouseEvent", {
             type: "mousePressed",
@@ -635,7 +738,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
             button: "left",
             clickCount: 1,
           });
-          await delay(100);
+          await delay(150);
           await finalClientG.send("Input.dispatchMouseEvent", {
             type: "mouseReleased",
             x: xf,
@@ -645,6 +748,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
           });
 
           // 2. TANGKAP POPUP KEDUA
+          console.log("⏳ Menunggu popup kedua muncul...");
           const secondPopup = await secondPopupPromise;
           console.log("📱 Popup Pemilihan Email muncul.");
 
@@ -676,7 +780,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                 if (nodeId) {
                   emailAccountNodeId = nodeId;
                 } else {
-                  await delay(1000); // Beri waktu loading halaman
+                  await delay(2000); // Beri waktu loading halaman
                 }
               } catch (domErr) {
                 // Jika error "Could not find node", kita abaikan dan coba lagi di loop berikutnya
@@ -698,7 +802,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                 x,
                 y,
               });
-              await delay(200);
+              await delay(1000);
               await clientSelectEmail.send("Input.dispatchMouseEvent", {
                 type: "mousePressed",
                 x,
@@ -706,7 +810,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                 button: "left",
                 clickCount: 1,
               });
-              await delay(100);
+              await delay(1000);
               await clientSelectEmail.send("Input.dispatchMouseEvent", {
                 type: "mouseReleased",
                 x,
@@ -753,17 +857,16 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
         console.log("⚠️ Gagal Re-click:", e.message);
       } finally {
         await finalClientG.detach();
+        await delay(3000);
       }
     }
-
-    await delay(3000);
 
     // ---------- SHOPEE SETUJU (ULTRA SAFE CDP METHOD) ----------
     try {
       let setujuClicked = false;
       const startSetuju = Date.now();
 
-      while (Date.now() - startSetuju < 8000) {
+      while (Date.now() - startSetuju < 3000) { // Dikurangi dari 5000ms
         // Timeout 8 detik
         // Gunakan XPath untuk mencari tombol dengan teks variasi bahasa
         const [btnSetuju] = await page.$$(
@@ -818,14 +921,36 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
       console.log("⚠️ Gagal memproses klik Setuju via CDP:", err.message);
     }
 
-    await delay(3000);
+    await delay(1000); // Dikurangi dari 3000ms
+
+    const elapsedIUnderstand = ((Date.now() - startTimeIUnderstand) / 1000).toFixed(2);
+    console.log(`⏱️ Durasi pengecekan paralel: ${elapsedIUnderstand} detik`);
 
     // ---------- CAPTCHA SCANNING (DEEP INTEGRATION - MANUAL FILTER MODE) ----------
     console.log("⏳ Sinkronisasi Captcha/Verifikasi (Silent CDP Mode)...");
 
-    const captchaElement = await page.$("#modal > aside > div._9CE2ae > div > div:nth-child(2) > div > div.Qm81FR > h1");
+    // const captchaElement = await page.$("#modal > aside > div._9CE2ae > div > div:nth-child(2) > div > div.Qm81FR > h1");
+    let captchaElement = null;
+
+    try {
+      console.log("⏳ Menunggu elemen captcha muncul (Timeout 10 detik)...");
+
+      // Menggunakan waitForSelector dengan selector h1 yang lebih kuat
+      captchaElement = await page.waitForSelector(
+        "#modal > aside > div.zXeIf4 > div > div:nth-child(2) > div > div.ABRXp1 > h1",
+        { timeout: 15000 }
+      );
+
+    } catch (error) {
+      // Jika dalam 10 detik elemen TIDAK muncul, blok ini akan berjalan
+      console.log("❌ Captcha tidak ditemukan setelah menunggu 10 detik.");
+      captchaElement = null;
+    }
+
+    console.log("Captcha Element:", captchaElement ? "Ditemukan" : "Tidak Ditemukan");
 
     if (captchaElement) {
+
       let lastSrc = "";
       let lastX = "translateX(0px)";
       let lastPuzzleStyle = "";
@@ -837,13 +962,14 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
       let logMelepasSlider = '';
       let isAutoResolved = false; // Akan selalu false karena kita hanya mau manual
 
-      const selectorImg =
-        "#modal > aside > div._9CE2ae > div > div:nth-child(2) > div > div.mOMhvN > div:nth-child(1) > div.kzPOuc > div:nth-child(1) > img";
-      const selectorPuzzle = "#puzzleContainer";
-      const selectorPuzzleImg = "#puzzleImgComponent";
-      const selectorSlider = "#sliderContainer";
+      // Menggunakan selector yang lebih kuat dan tahan banting untuk elemen canvas
+      const selectorImg = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(1) canvas";
+      const selectorPuzzle = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(2)";
+      const selectorPuzzleImg = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(2) canvas";
+      const selectorSlider = "#modal div[aria-hidden='true'] + div";
 
-      const selectorTitleCaptcha = "#modal > aside > div._9CE2ae > div > div:nth-child(2) > div > div.Qm81FR > h1"
+
+      const selectorTitleCaptcha = "#modal h1";
 
       // Mulai dengan mode sembunyi (Silent Monitoring)
       await moveBrowser("show");
@@ -866,7 +992,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
             const stillExist = await page.$(selectorSlider);
 
             if (!stillExist) {
-              await moveBrowser("hide");
+              await moveBrowser("show");
               console.log(`✅ [WORKER ${WORKER_ID}] Slider sukses!`);
               const resolveData = `${lastPuzzleStyle}\n\n#sliderContainer\n${lastX};`;
 
@@ -877,6 +1003,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
                   [resolveData, numPuzzleX, numPuzzleY, numSliderX, id_image],
                 );
                 console.log("✅ Data resolve tersimpan ke database, ID . " + id_image + ", slider : " + lastX);
+                await moveBrowser("hide");
               }
 
               // Klik tombol Setuju/Lanjutkan
@@ -910,132 +1037,140 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
             continue;
           }
 
-          // 2. MONITORING GAMBAR (SRC) VIA CDP
-          const nodeImg = await client
+          // 2. MONITORING GAMBAR (BASE64) VIA CANVAS toDataURL
+          let currentSrc = null;
+          try {
+            currentSrc = await page.evaluate((sel) => {
+              const canvas = document.querySelector(sel);
+              if (!canvas) return null;
+
+              // Mengambil data murni dari buffer canvas, bebas dari efek rendering layar
+              const dataUrl = canvas.toDataURL("image/png");
+
+              // Jika canvas belum selesai digambar (kosong), string base64 akan sangat pendek (di bawah 1000 karakter)
+              if (dataUrl.length < 5000) return null;
+
+              return dataUrl;
+            }, selectorImg);
+          } catch (err) { }
+
+          if (currentSrc) {
+            if (currentSrc !== lastSrc) {
+              lastSrc = currentSrc;
+              lastX = "translateX(0px)";
+              // console.log("🔄 Gambar Captcha berubah, mengecek status...");
+
+              const imgHash = crypto.createHash('md5').update(lastSrc).digest('hex');
+
+              let [newcekCaptcha] = await pool.query(
+                "SELECT id, data_resolve, status FROM captcha_shopee WHERE image_hash = ? LIMIT 1",
+                [imgHash],
+              );
+
+              cekCaptcha = newcekCaptcha
+
+              // A. JIKA CAPTCHA BARU (Belum ada di DB sama sekali)
+              if (cekCaptcha.length === 0) {
+                try {
+                  await pool.query(
+                    "INSERT INTO captcha_shopee (image, image_hash) VALUES (?, ?)",
+                    [lastSrc, imgHash],
+                  );
+
+                  const [cekUlang] = await pool.query(
+                    "SELECT id, data_resolve, status FROM captcha_shopee WHERE image_hash = ?",
+                    [imgHash],
+                  );
+                  cekCaptcha = cekUlang;
+
+                  console.log(
+                    "🆕 Captcha Baru Terdeteksi ID " + cekCaptcha[0].id,
+                  );
+
+                  await moveBrowser("show");
+                } catch (err) {
+                  const [cekUlang] = await pool.query(
+                    "SELECT id, data_resolve, status FROM captcha_shopee WHERE image_hash = ?",
+                    [imgHash],
+                  );
+                  cekCaptcha = cekUlang;
+                }
+              }
+
+              // B. JIKA CAPTCHA LAMA (Sudah ada di DB)
+              if (cekCaptcha.length > 0) {
+                // Update counter total kemunculan
+                await pool.query(
+                  "UPDATE captcha_shopee SET total = total + 1 WHERE id = ?",
+                  [cekCaptcha[0].id],
+                );
+
+                // Logika permintaanmu: Jika sudah ada data_resolve, tetap sembunyikan (Silent)
+                if (cekCaptcha[0].data_resolve) {
+                  console.log(
+                    `🙈 Captcha Lama (ID: ${cekCaptcha[0].id}) sudah ada solusi. Tetap Silent (Menunggu ganti otomatis)...`,
+                  );
+                  await moveBrowser("hide");
+                } else {
+                  // Jika ada di DB tapi data_resolve kosong, tetap show
+                  console.log(
+                    `⚠️ Captcha Lama (ID: ${cekCaptcha[0].id}) tapi belum ada solusi. MENAMPILKAN LAYAR...`,
+                  );
+                  await moveBrowser("show");
+                }
+              }
+
+              id_image = cekCaptcha[0].id; // Pastikan id_image selalu diset ketika captcha terdeteksi
+              const teksBaru = `WORKER[${WORKER_ID}] - ID IMAGE : ${id_image}`;
+
+              //rubah title capcha
+              try {
+                // 1. Dapatkan CDP Session
+                const client = await page.target().createCDPSession();
+
+                // 2. Ambil Root Node dari dokumen
+                const { root: { nodeId: documentNodeId } } = await client.send('DOM.getDocument');
+
+                // 3. Cari Node ID berdasarkan selector kamu
+                const { nodeId } = await client.send('DOM.querySelector', {
+                  nodeId: documentNodeId,
+                  selector: selectorTitleCaptcha
+                });
+
+                if (nodeId) {
+                  // 4. Gunakan Runtime.evaluate untuk mengubah innerText pada node tersebut
+                  // Kita gunakan NodeID untuk memastikan kita mengubah elemen yang tepat
+                  await client.send('Runtime.evaluate', {
+                    expression: `document.querySelector('${selectorTitleCaptcha}').innerText = '${teksBaru}'`,
+                    returnByValue: true
+                  });
+                }
+              } catch (e) {
+                console.log(`❌ [WORKER ${WORKER_ID}] Gagal via CDP: Selector mungkin belum muncul.`);
+              }
+              //end rubah title capcha
+
+            } // Tutup if (currentSrc !== lastSrc)
+          } // Tutup if (currentSrc)
+
+          // 3. MONITORING KOORDINAT GESER (LIVE UPDATE)
+          // Kita ganti memantau puzzle secara langsung karena elemen sliderContainer yang baru tidak bergerak
+          const nodeP = await client
             .send("DOM.querySelector", {
               nodeId: root.nodeId,
-              selector: selectorImg,
+              selector: selectorPuzzle,
             })
             .catch(() => null);
 
-          if (nodeImg && nodeImg.nodeId) {
-            const { attributes } = await client.send("DOM.getAttributes", {
-              nodeId: nodeImg.nodeId,
-            });
-            const srcIdx = attributes.indexOf("src");
+          if (nodeP && nodeP.nodeId) {
+            const { attributes: aP } = await client.send(
+              "DOM.getAttributes",
+              { nodeId: nodeP.nodeId },
+            );
 
-            if (srcIdx !== -1) {
-              const currentSrc = attributes[srcIdx + 1];
-
-              if (currentSrc !== lastSrc) {
-                lastSrc = currentSrc;
-                lastX = "translateX(0px)";
-                // console.log("🔄 Gambar Captcha berubah, mengecek status...");
-
-                const imgHash = crypto.createHash('md5').update(lastSrc).digest('hex');
-
-                let [newcekCaptcha] = await pool.query(
-                  "SELECT id, data_resolve, status FROM captcha_shopee WHERE image_hash = ? LIMIT 1",
-                  [imgHash],
-                );
-
-                cekCaptcha = newcekCaptcha
-
-                // A. JIKA CAPTCHA BARU (Belum ada di DB sama sekali)
-                if (cekCaptcha.length === 0) {
-                  try {
-                    await pool.query(
-                      "INSERT INTO captcha_shopee (image, image_hash) VALUES (?, ?)",
-                      [lastSrc, imgHash],
-                    );
-
-                    const [cekUlang] = await pool.query(
-                      "SELECT id, data_resolve, status FROM captcha_shopee WHERE image_hash = ?",
-                      [imgHash],
-                    );
-                    cekCaptcha = cekUlang;
-
-                    console.log(
-                      "🆕 Captcha Baru Terdeteksi ID " + cekCaptcha[0].id,
-                    );
-
-                    await moveBrowser("show");
-                  } catch (err) {
-                    const [cekUlang] = await pool.query(
-                      "SELECT id, data_resolve, status FROM captcha_shopee WHERE image_hash = ?",
-                      [imgHash],
-                    );
-                    cekCaptcha = cekUlang;
-                  }
-                }
-
-                // B. JIKA CAPTCHA LAMA (Sudah ada di DB)
-                if (cekCaptcha.length > 0) {
-                  // Update counter total kemunculan
-                  await pool.query(
-                    "UPDATE captcha_shopee SET total = total + 1 WHERE id = ?",
-                    [cekCaptcha[0].id],
-                  );
-
-                  // Logika permintaanmu: Jika sudah ada data_resolve, tetap sembunyikan (Silent)
-                  if (cekCaptcha[0].data_resolve) {
-                    console.log(
-                      `🙈 Captcha Lama (ID: ${cekCaptcha[0].id}) sudah ada solusi. Tetap Silent (Menunggu ganti otomatis)...`,
-                    );
-                    await moveBrowser("hide");
-                  } else {
-                    // Jika ada di DB tapi data_resolve kosong, tetap show
-                    console.log(
-                      `⚠️ Captcha Lama (ID: ${cekCaptcha[0].id}) tapi belum ada solusi. MENAMPILKAN LAYAR...`,
-                    );
-                    await moveBrowser("show");
-                  }
-                }
-
-                const teksBaru = `WORKER[${WORKER_ID}] - ID IMAGE : ${cekCaptcha[0].id}`;
-
-                //rubah title capcha
-                try {
-                  // 1. Dapatkan CDP Session
-                  const client = await page.target().createCDPSession();
-
-                  // 2. Ambil Root Node dari dokumen
-                  const { root: { nodeId: documentNodeId } } = await client.send('DOM.getDocument');
-
-                  // 3. Cari Node ID berdasarkan selector kamu
-                  const { nodeId } = await client.send('DOM.querySelector', {
-                    nodeId: documentNodeId,
-                    selector: selectorTitleCaptcha
-                  });
-
-                  if (nodeId) {
-                    // 4. Gunakan Runtime.evaluate untuk mengubah innerText pada node tersebut
-                    // Kita gunakan NodeID untuk memastikan kita mengubah elemen yang tepat
-                    await client.send('Runtime.evaluate', {
-                      expression: `document.querySelector('${selectorTitleCaptcha}').innerText = '${teksBaru}'`,
-                      returnByValue: true
-                    });
-                  }
-                } catch (e) {
-                  console.log(`❌ [WORKER ${WORKER_ID}] Gagal via CDP: Selector mungkin belum muncul.`);
-                }
-                //end rubah title capcha
-
-              }
-            }
-          }
-
-          // 3. MONITORING KOORDINAT GESER (LIVE UPDATE)
-          const { attributes: attrSli } = await client.send(
-            "DOM.getAttributes",
-            { nodeId: sliderNode.nodeId },
-          );
-          const styleIdxS = attrSli.indexOf("style");
-
-          if (styleIdxS !== -1) {
-            const styleValS = attrSli[styleIdxS + 1];
-            const currentX =
-              styleValS.match(/translateX\([^)]+\)/)?.[0] || "translateX(0px)";
+            const sP = aP[aP.indexOf("style") + 1] || "";
+            const currentX = sP.match(/translateX\([^)]+\)/)?.[0] || "translateX(0px)";
+            const pY = sP.match(/translateY\([^)]+\)/)?.[0] || "translateY(0px)";
 
             if (currentX !== lastX) {
               lastX = currentX;
@@ -1098,6 +1233,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
 
       await client.detach();
     }
+
     await delay(3000);
     // ---------- CEK LOGIN AKHIR (ULTRA SAFE CDP RUNTIME) ----------
     console.log("⏳ Cek status login akhir via Direct CDP Runtime...");
@@ -1185,10 +1321,18 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
       "SELECT * FROM setting_shopee WHERE id = 1",
     );
 
+    TYPE_COOKIE = settingRows[0].type_cookie;
+
+    let MAX_ACCOUNT_COOKIE = settingRows[0].max_account_cookie;
+
     if (settingRows[0].status_server === "ON") {
       console.log("Stop dikarenakan status server ON");
       await delay(5000);
       process.exit(0);
+    } else {
+      settingRows[0].max_cookie = process.env.MAX_COOKIE;
+      TYPE_COOKIE = process.env.TYPE_COOKIE || "ID";
+      MAX_ACCOUNT_COOKIE = process.env.MAX_ACCOUNT_COOKIE;
     }
 
     if (settingRows[0].max_cookie <= WORKER_ID) {
@@ -1198,7 +1342,6 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
     }
 
     //start set lang cookie
-    TYPE_COOKIE = settingRows[0].type_cookie;
     BASE_URL = "https://shopee.co.id";
     SHOPEE_LANG = "id";
 
@@ -1211,8 +1354,6 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
     }
     LOGIN_URL = `${BASE_URL}/buyer/login`;
     //end set lang cookie
-
-    const MAX_ACCOUNT_COOKIE = settingRows[0].max_account_cookie;
 
     let end_date_time = moment().format("YYYY-MM-DD HH:mm:ss");
     const diff = moment(end_date_time).diff(moment(start_date_time), "minutes");
@@ -1247,7 +1388,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
 
       //andi
       // const [candidates] = await pool.query(
-      //   "SELECT id FROM akun_shopee WHERE status = 0  LIMIT 1",
+      //   "SELECT id FROM akun_shopee WHERE status = 0 LIMIT 1",
       //   [],
       // );
 
