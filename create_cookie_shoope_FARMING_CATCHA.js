@@ -936,8 +936,16 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
       console.log("⏳ Menunggu elemen captcha muncul (Timeout 10 detik)...");
 
       // Menggunakan waitForSelector dengan selector h1 yang lebih kuat
+
+      //svg captcha
+      // captchaElement = await page.waitForSelector(
+      //   "#modal > aside > div.zXeIf4 > div > div:nth-child(2) > div > div.ABRXp1 > h1",
+      //   { timeout: 15000 }
+      // );
+
+      //img captcha
       captchaElement = await page.waitForSelector(
-        "#modal > aside > div.zXeIf4 > div > div:nth-child(2) > div > div.ABRXp1 > h1",
+        "#modal aside h1",
         { timeout: 15000 }
       );
 
@@ -963,13 +971,17 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
       let isAutoResolved = false; // Akan selalu false karena kita hanya mau manual
 
       // Menggunakan selector yang lebih kuat dan tahan banting untuk elemen canvas
-      const selectorImg = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(1) canvas";
-      const selectorPuzzle = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(2)";
-      const selectorPuzzleImg = "#modal div[style*='width: 280px; height: 150px;'] > div:nth-child(2) canvas";
-      const selectorSlider = "#modal div[aria-hidden='true'] + div";
-
-
-      const selectorTitleCaptcha = "#modal h1";
+      // captcha svg (Background Image)
+      const selectorImg = "div.Mcqxdt > div:nth-child(1) > canvas, div[style*='width: 280px; height: 150px;'] > div:nth-child(1) canvas";
+      // captcha puzzle piece (The small draggable image)
+      const selectorPuzzleImg = "div.Mcqxdt > div:nth-child(2) canvas, div[style*='width: 280px; height: 150px;'] > div:nth-child(2) canvas";
+      // captcha slider track
+      const selectorSlider = "div.HrMY5p > div.F0XJ1W";
+      // captcha puzzle handle (Tombol untuk ditarik)
+      const selectorPuzzle = "div.HrMY5p > div.F0XJ1W > div";
+      
+      // captcha title
+      const selectorTitleCaptcha = "div.V6-hK9 > h1, h1.p6LilS";
 
       // Mulai dengan mode sembunyi (Silent Monitoring)
       await moveBrowser("show");
@@ -1038,6 +1050,7 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
           }
 
           // 2. MONITORING GAMBAR (BASE64) VIA CANVAS toDataURL
+          // captcha svg
           let currentSrc = null;
           try {
             currentSrc = await page.evaluate((sel) => {
@@ -1053,6 +1066,23 @@ async function loginShopee(email, password, id_akun, id_worker, lang) {
               return dataUrl;
             }, selectorImg);
           } catch (err) { }
+
+          // captcha img
+          // let currentSrc = null;
+          // try {
+          //   currentSrc = await page.evaluate((sel) => {
+          //     const img = document.querySelector(sel);
+          //     if (!img) return null;
+
+          //     // Mengambil attribute src langsung dari tag image
+          //     const dataUrl = img.src;
+
+          //     // Jika string src kosong atau terlalu pendek, abaikan
+          //     if (!dataUrl || dataUrl.length < 100) return null;
+
+          //     return dataUrl;
+          //   }, selectorImg);
+          // } catch (err) { }
 
           if (currentSrc) {
             if (currentSrc !== lastSrc) {
